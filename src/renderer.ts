@@ -24,7 +24,6 @@ function getColor(colorName: string): ChalkInstance {
 export class Renderer {
   private agents: Record<string, AgentConfig>
   private spinner: Ora | null = null
-  private inThread = false
 
   constructor(agents: Record<string, AgentConfig>) {
     this.agents = agents
@@ -60,30 +59,11 @@ export class Renderer {
 
       case 'delta':
         this.stopSpinner()
-        if (this.inThread) {
-          // Indent thread content with colored border
-          const lines = event.content.split('\n')
-          const color = getColor(this.agents[event.agent]?.color ?? 'white')
-          for (let i = 0; i < lines.length; i++) {
-            if (i < lines.length - 1) {
-              process.stdout.write(color('  ┃ ') + lines[i] + '\n')
-            } else {
-              // Last segment — no newline (might be partial)
-              process.stdout.write(lines[i] === '' ? '' : color('  ┃ ') + lines[i])
-            }
-          }
-        } else {
-          process.stdout.write(event.content)
-        }
+        process.stdout.write(event.content)
         break
 
       case 'done':
-        if (this.inThread) {
-          // End the streaming line
-          process.stdout.write('\n')
-        } else {
-          process.stdout.write('\n')
-        }
+        process.stdout.write('\n')
         break
 
       case 'thread_start': {
@@ -101,7 +81,6 @@ export class Renderer {
             chalk.bold(`Thread: ${fromLabel} → @${toLabel}`),
         )
         console.log(toColor('  ┃'))
-        this.inThread = true
         break
       }
 
@@ -123,7 +102,6 @@ export class Renderer {
           toColor('  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'),
         )
         console.log()
-        this.inThread = false
         break
       }
 

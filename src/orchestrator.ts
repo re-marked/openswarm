@@ -93,10 +93,11 @@ export class Orchestrator extends EventEmitter {
       mentionDepth++
       for (const m of mentions) mentionedAgents.add(m.agent)
 
-      // Process mentions in PARALLEL (unlike SSE gateway which does sequential)
-      const threadResults = await Promise.all(
-        mentions.map((mention) => this.processMention(mention)),
-      )
+      // Process mentions sequentially — parallel interleaves terminal output
+      const threadResults: (string | null)[] = []
+      for (const mention of mentions) {
+        threadResults.push(await this.processMention(mention))
+      }
 
       // Build synthesis message from thread results
       const threadReplies: string[] = []
