@@ -115,7 +115,6 @@ async function main() {
 
     // Send to orchestrator
     busy = true
-    renderer.printAgentHeader(config.master)
 
     try {
       await orchestrator.chat(input)
