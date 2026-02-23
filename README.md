@@ -1,14 +1,16 @@
 # OpenSwarm
 
-Multi-agent @mention orchestrator CLI for [OpenClaw](https://openclaw.com).
+A group chat for your AI agents. Connect OpenClaw, Gemini, OpenAI, or any OpenAI-compatible API — agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
 
-Connect multiple AI agents (OpenClaw, Gemini, OpenAI, or any OpenAI-compatible API), type a message, and watch them collaborate through @mentions — with parallel execution, recursive nesting, tool visibility, session persistence, and rich terminal output.
+```bash
+npx openswarm-cli init
+```
 
-```
-npm install -g openswarm-cli
-openswarm init
-openswarm
-```
+That's it. One command to set up a multi-agent swarm.
+
+---
+
+## Demo
 
 ```
 you > Research AI agent trends and build a demo
@@ -26,37 +28,115 @@ you > Research AI agent trends and build a demo
 ● Master: Based on the team's findings, here's the full picture...
 ```
 
-## Install
+---
+
+## Setup (2 minutes)
+
+### Step 1: Get a Gemini API key (free)
+
+Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and create a key. It's free.
+
+### Step 2: Create your swarm
+
+```bash
+mkdir my-swarm && cd my-swarm
+npx openswarm-cli init
+```
+
+The wizard asks how many agents you want, their names, and roles. Defaults work great — just press Enter through everything to get a 3-agent team (Master + Researcher + Coder) using Gemini.
+
+### Step 3: Add your API key
+
+```bash
+echo GOOGLE_API_KEY=your-key-here > .env
+```
+
+Replace `your-key-here` with the key from Step 1.
+
+### Step 4: Start chatting
+
+```bash
+npx openswarm-cli
+```
+
+That's it. Ask a question and watch your agents collaborate.
+
+---
+
+## Global Install (optional)
+
+If you use it often, install globally so you can just type `openswarm`:
 
 ```bash
 npm install -g openswarm-cli
+
+# Then anywhere:
+openswarm init
+openswarm
 ```
 
 Requires Node.js 20+.
 
-## Quick Start
+---
 
-### Option 1: Interactive setup (recommended)
+## How It Works
 
-```bash
-# Create a project directory
-mkdir my-swarm && cd my-swarm
+You type a message. The master agent reads it and decides which specialists to @mention. Mentioned agents run **in parallel**, respond, and the master synthesizes everything into a final answer.
 
-# Run the setup wizard
-openswarm init
-
-# Add your API key
-echo "GOOGLE_API_KEY=your-key-here" > .env
-
-# Start chatting
-openswarm
+```
+You
+ └─→ Master (streams live to your terminal)
+      ├─→ @researcher (runs in parallel)  ─→ responds
+      └─→ @coder (runs in parallel)       ─→ responds
+           └─→ @researcher (nested!)      ─→ responds
+      Master receives all results → final answer
 ```
 
-The wizard creates a `swarm.config.json` with your agents. By default it uses Gemini (free tier).
+### Key behaviors
 
-### Option 2: Manual config
+- **Master streams live** — you see tokens as they arrive
+- **Specialists run in parallel** — a status line shows who's thinking/streaming
+- **Agents can @mention each other** — not just master → specialist, but researcher → coder too
+- **Depth limit** — prevents infinite @mention loops (default: 3 levels)
+- **Auto-generated prompts** — master gets delegation instructions, specialists get collaboration instructions, all based on your config. No prompt engineering needed
+- **Tool visibility** — when agents use tools (web search, etc.), you see live spinners
+- **Lazy connections** — agents only connect when first @mentioned
+- **Max 20 mentions per message** — safety valve against runaway chains
 
-Create `swarm.config.json`:
+---
+
+## Session Management
+
+Every conversation auto-saves to `~/.openswarm/sessions/`.
+
+```bash
+# Inside the chat, list past sessions
+/sessions
+
+# Resume a session (agents remember the full conversation)
+openswarm --session 20260223-abc123
+
+# Export to Markdown
+/export
+```
+
+---
+
+## Slash Commands
+
+| Command | What it does |
+|---------|-------------|
+| `/status` | Connection status for all agents |
+| `/sessions` | List saved sessions with timestamps |
+| `/export` | Export conversation to Markdown file |
+| `/clear` | Clear terminal |
+| `/quit` | Exit (also `/exit` or `Ctrl+C`) |
+
+---
+
+## Configuration
+
+The `openswarm init` wizard generates `swarm.config.json` for you. Here's the full format if you want to edit it manually:
 
 ```json
 {
@@ -80,209 +160,77 @@ Create `swarm.config.json`:
       "model": "gemini-2.5-flash"
     }
   },
-  "master": "master"
-}
-```
-
-Create `.env`:
-
-```
-GOOGLE_API_KEY=your-key-here
-```
-
-Run:
-
-```bash
-openswarm
-```
-
-### Option 3: Local OpenClaw agents
-
-```bash
-# Start OpenClaw instances + nginx proxy
-docker compose -f examples/docker-compose.yml up
-
-# Point to local agents
-openswarm -c examples/swarm.config.local.json
-```
-
-## Features
-
-### Parallel @mentions
-
-When the master agent @mentions multiple specialists, they run in parallel. A live status line shows progress:
-
-```
-● Researcher: thinking...  ● Coder: streaming...
-```
-
-Results are collected and rendered in order once all agents finish.
-
-### Deep nesting
-
-Agents can @mention each other recursively — not just master → specialist. If the researcher needs code help, it can @mention the coder directly:
-
-```
-Master → @researcher "look into X"
-  Researcher → @coder "implement Y"
-    Coder responds
-  Researcher synthesizes
-Master synthesizes
-```
-
-Depth limit prevents infinite loops (default: 3 levels). Per-branch visited sets prevent cycles while allowing the same agent in different branches.
-
-### Tool visibility
-
-When agents use tools (web search, code execution, etc.), you see live spinners:
-
-```
-● Researcher: [web_search] searching...
-```
-
-### Auto-generated system prompts
-
-You don't need to write system prompts. OpenSwarm auto-generates them based on your agent config:
-
-- Master gets delegation instructions listing all team members
-- Specialists get collaboration instructions with peer @mention syntax
-- Custom `systemPrompt` in config overrides the auto-generated one
-
-### Session persistence
-
-Every conversation is auto-saved to `~/.openswarm/sessions/`. Resume any session:
-
-```bash
-# List past sessions
-openswarm     # then type /sessions
-
-# Resume a specific session
-openswarm --session 20260223-abc123
-```
-
-Sessions save conversation histories so agents retain context when you resume.
-
-### Markdown export
-
-Export any conversation to a readable Markdown file:
-
-```
-/export
-```
-
-Writes `openswarm-{session-id}.md` to the current directory with agent responses, thread indicators, and tool usage.
-
-### .env file support
-
-OpenSwarm reads `.env` from the current directory automatically. Supports:
-
-```bash
-GOOGLE_API_KEY=your-key
-OPENAI_API_KEY=sk-...
-export SOME_VAR=value    # export prefix OK
-KEY="quoted value"       # quotes stripped
-# comments ignored
-```
-
-API keys from `.env` are injected into any agent that doesn't have its own `token` configured.
-
-## CLI Reference
-
-```
-openswarm [options]
-openswarm init
-```
-
-### Options
-
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--config <path>` | `-c` | `swarm.config.json` | Path to config file |
-| `--session <id>` | `-s` | -- | Resume a saved session |
-| `--verbose` | `-v` | `false` | Verbose output |
-
-### Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/status` | Show connection status for all agents |
-| `/sessions` | List saved sessions with timestamps |
-| `/export` | Export conversation to Markdown |
-| `/clear` | Clear the terminal |
-| `/quit` | Exit (also `/exit` or Ctrl+C) |
-
-## Config Reference
-
-```json
-{
-  "agents": {
-    "master": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "token": "optional-auth-token",
-      "label": "Master",
-      "color": "indigo",
-      "model": "gemini-2.5-flash",
-      "systemPrompt": "optional custom prompt"
-    }
-  },
   "master": "master",
   "maxMentionDepth": 3,
-  "sessionPrefix": "openswarm",
   "timeout": 120000
 }
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `agents` | object | required | Map of agent name → config |
-| `agents.*.url` | string | required | Base URL for OpenAI-compatible chat completions API |
-| `agents.*.token` | string | -- | Auth token (sent as Bearer header) |
-| `agents.*.label` | string | required | Display name in terminal |
-| `agents.*.color` | string | required | Terminal color: indigo, green, amber, cyan, purple, red, blue, pink |
-| `agents.*.model` | string | -- | Model name (e.g. `gemini-2.5-flash`, `gpt-4o`) |
-| `agents.*.systemPrompt` | string | auto | System prompt (auto-generated if not set) |
-| `master` | string | required | Key of the coordinator agent |
-| `maxMentionDepth` | number | 3 | Max depth of recursive @mention chains |
-| `sessionPrefix` | string | `"openswarm"` | Prefix for session IDs |
-| `timeout` | number | 120000 | Timeout per agent response (ms) |
+### Agent fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `url` | Yes | OpenAI-compatible chat completions endpoint |
+| `label` | Yes | Display name in terminal |
+| `color` | Yes | Terminal color (`indigo`, `green`, `amber`, `cyan`, `purple`, `red`, `blue`, `pink`) |
+| `model` | No | Model name (e.g. `gemini-2.5-flash`, `gpt-4o`) |
+| `token` | No | Auth token (Bearer header). Auto-filled from `.env` if not set |
+| `systemPrompt` | No | Custom system prompt. Auto-generated if not set |
+
+### Top-level fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `master` | required | Which agent is the coordinator |
+| `maxMentionDepth` | `3` | Max depth of recursive @mention chains |
+| `timeout` | `120000` | Timeout per agent response in ms |
+| `sessionPrefix` | `"openswarm"` | Prefix for session file names |
+
+---
+
+## .env File
+
+OpenSwarm reads `.env` from the current directory automatically:
+
+```bash
+GOOGLE_API_KEY=your-gemini-key
+OPENAI_API_KEY=sk-your-openai-key
+```
+
+Keys are injected into any agent that doesn't have its own `token` set in the config. Supports comments (`#`), `export` prefix, and quoted values.
+
+---
 
 ## Compatible APIs
 
-OpenSwarm works with any API that supports the OpenAI chat completions format:
+Works with anything that speaks the OpenAI chat completions format:
 
-| Provider | URL | Model example |
-|----------|-----|---------------|
-| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
-| OpenClaw | `http://localhost:18789/v1` | -- (uses agent's configured model) |
-| Any OpenAI-compatible | `https://your-endpoint/v1` | your-model |
+| Provider | URL | Model |
+|----------|-----|-------|
+| **Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash` |
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o` |
+| **OpenClaw** | `http://localhost:18789/v1` | (agent's own model) |
+| **Ollama** | `http://localhost:11434/v1` | `llama3` |
+| **Any compatible** | `https://your-endpoint/v1` | your-model |
 
-## Architecture
+You can mix providers — master on Gemini, coder on OpenAI, researcher on a local Ollama. Each agent gets its own `url` and `model`.
+
+---
+
+## CLI Flags
 
 ```
-User input
-  │
-  ▼
-Master Agent (streams live)
-  │
-  ├── detects @mentions in response
-  │
-  ▼
-Parallel: @researcher + @coder (buffered)
-  │                        │
-  ├── @coder (nested)      │
-  │    └── responds         │
-  ├── synthesizes           ▼
-  │                     responds
-  ▼
-Master receives all results → synthesizes final answer
+openswarm [flags]
+openswarm init
 ```
 
-- **Master streams live** — you see tokens as they arrive
-- **Mentioned agents buffer** — responses collected, then rendered in order (no interleaving)
-- **Lazy connections** — agents connect only when first @mentioned
-- **Connection dedup** — parallel mentions to the same agent share one connection attempt
-- **Global safety valve** — max 20 total mentions per user message
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--config <path>` | `-c` | `swarm.config.json` | Config file path |
+| `--session <id>` | `-s` | — | Resume a saved session |
+| `--verbose` | `-v` | `false` | Verbose output |
+
+---
 
 ## Development
 
@@ -291,7 +239,7 @@ git clone https://github.com/re-marked/openswarm.git
 cd openswarm
 npm install
 
-# Dev mode (no build step)
+# Dev mode (TypeScript, no build step)
 npx tsx src/cli.ts
 
 # Build
@@ -301,14 +249,9 @@ npm run build
 npm run type-check
 ```
 
-## Dependencies
+2 runtime dependencies: `chalk` (colors) and `ora` (spinners). That's it.
 
-| Package | Why |
-|---------|-----|
-| `chalk` v5 | Terminal colors (ESM-native) |
-| `ora` v8 | Spinners (ESM-native) |
-
-2 runtime dependencies. That's it.
+---
 
 ## License
 
