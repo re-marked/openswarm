@@ -3,10 +3,9 @@
 A group chat for your AI agents. Connect OpenClaw, Gemini, OpenAI, or any OpenAI-compatible API — agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
 
 ```bash
-npx openswarm-cli init
+npm install -g openswarm-cli
+openswarm init
 ```
-
-That's it. One command to set up a multi-agent swarm.
 
 ---
 
@@ -32,50 +31,42 @@ you > Research AI agent trends and build a demo
 
 ## Setup (2 minutes)
 
-### Step 1: Get a Gemini API key (free)
+### Step 1: Install
+
+```bash
+npm install -g openswarm-cli
+```
+
+Requires Node.js 20+.
+
+### Step 2: Get a Gemini API key (free)
 
 Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and create a key. It's free.
 
-### Step 2: Create your swarm
+### Step 3: Create your swarm
 
 ```bash
 mkdir my-swarm && cd my-swarm
-npx openswarm-cli init
+openswarm init
 ```
 
 The wizard asks how many agents you want, their names, and roles. Defaults work great — just press Enter through everything to get a 3-agent team (Master + Researcher + Coder) using Gemini.
 
-### Step 3: Add your API key
+### Step 4: Add your API key
 
 ```bash
 echo GOOGLE_API_KEY=your-key-here > .env
 ```
 
-Replace `your-key-here` with the key from Step 1.
+Replace `your-key-here` with the key from Step 2.
 
-### Step 4: Start chatting
-
-```bash
-npx openswarm-cli
-```
-
-That's it. Ask a question and watch your agents collaborate.
-
----
-
-## Global Install (optional)
-
-If you use it often, install globally so you can just type `openswarm`:
+### Step 5: Start chatting
 
 ```bash
-npm install -g openswarm-cli
-
-# Then anywhere:
-openswarm init
 openswarm
 ```
 
-Requires Node.js 20+.
+That's it. Ask a question and watch your agents collaborate.
 
 ---
 
@@ -136,7 +127,7 @@ openswarm --session 20260223-abc123
 
 ## Configuration
 
-The `openswarm init` wizard generates `swarm.config.json` for you. Here's the full format if you want to edit it manually:
+`openswarm init` generates `swarm.config.json` for you. Here's the full format if you want to edit it manually:
 
 ```json
 {
