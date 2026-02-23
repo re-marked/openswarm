@@ -132,8 +132,11 @@ export class Orchestrator extends EventEmitter {
    * stream the response, emit thread events.
    */
   private async processMention(mention: MentionMatch): Promise<string | null> {
+    const threadId = generateId()
+
     this.fire({
       type: 'thread_start',
+      threadId,
       from: this.config.master,
       to: mention.agent,
       message: mention.message,
@@ -146,7 +149,7 @@ export class Orchestrator extends EventEmitter {
         agent: mention.agent,
         error: `Failed to connect to ${mention.agent}`,
       })
-      this.fire({ type: 'thread_end', from: this.config.master, to: mention.agent })
+      this.fire({ type: 'thread_end', threadId, from: this.config.master, to: mention.agent })
       return null
     }
 
@@ -163,11 +166,12 @@ export class Orchestrator extends EventEmitter {
 
     if (result !== null) {
       this.fire({ type: 'done', agent: mention.agent, content: result })
+      this.fire({ type: 'thread_message', threadId, agent: mention.agent, content: result })
     } else {
       this.fire({ type: 'error', agent: mention.agent, error: 'No response' })
     }
 
-    this.fire({ type: 'thread_end', from: this.config.master, to: mention.agent })
+    this.fire({ type: 'thread_end', threadId, from: this.config.master, to: mention.agent })
     return result
   }
 

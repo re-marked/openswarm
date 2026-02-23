@@ -133,3 +133,7 @@ Create a config file (or use `-c path`):
 | `ora` v8 | Spinners (ESM-native) |
 
 2 runtime deps. That's it.
+
+## Changelog
+
+- **threadId on thread events**: `thread_start`, `thread_message`, and `thread_end` events now carry a `threadId` string for correlating concurrent threads.
