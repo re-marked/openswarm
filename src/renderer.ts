@@ -47,6 +47,7 @@ export class Renderer {
   private streamBuffer = ''
   private streamLineCount = 0
   private currentAgent = ''
+  private needsPrefix = false
 
   constructor(agents: Record<string, AgentConfig>) {
     this.agents = agents
@@ -76,20 +77,29 @@ export class Renderer {
 
       case 'thinking': {
         this.stopSpinner()
-        // Print agent name header before the spinner
-        this.printChatHeader(event.agent)
         this.currentAgent = event.agent
-        const agentColor = this.agents[event.agent]?.color ?? 'yellow'
+        this.needsPrefix = true
+        const agent = this.agents[event.agent]
+        if (!agent) break
+        const color = getColor(agent.color)
+        console.log() // blank line before agent message
         this.spinner = ora({
-          text: 'thinking...',
-          color: getOraColor(agentColor) as any,
-          indent: 2,
+          text: `${color('●')} ${color.bold(agent.label)}: thinking...`,
+          color: getOraColor(agent.color) as any,
         }).start()
         break
       }
 
       case 'delta':
         this.stopSpinner()
+        if (this.needsPrefix) {
+          const agent = this.agents[this.currentAgent]
+          if (agent) {
+            const color = getColor(agent.color)
+            process.stdout.write(`${color('●')} ${color.bold(agent.label)}: `)
+          }
+          this.needsPrefix = false
+        }
         this.streamBuffer += event.content
         const newlines = (event.content.match(/\n/g) || []).length
         this.streamLineCount += newlines
@@ -97,41 +107,45 @@ export class Renderer {
         break
 
       case 'done': {
-        // Clear raw streamed text, reprint with markdown
         const raw = this.streamBuffer
         if (raw) {
-          const lineCount = this.streamLineCount + 1
-          process.stdout.write(`\x1b[${lineCount}A\x1b[0J`)
+          // Move cursor back to the start of the prefix line
+          if (this.streamLineCount > 0) {
+            process.stdout.write(`\x1b[${this.streamLineCount}A`)
+          }
+          process.stdout.write(`\r\x1b[0J`)
+
+          // Reprint with agent prefix + markdown
+          const agent = this.agents[this.currentAgent]
+          if (agent) {
+            const color = getColor(agent.color)
+            process.stdout.write(`${color('●')} ${color.bold(agent.label)}: `)
+          }
           console.log(renderMarkdown(raw))
         }
         this.streamBuffer = ''
         this.streamLineCount = 0
         this.currentAgent = ''
+        this.needsPrefix = false
         break
       }
 
       case 'thread_start':
-        // Flat style — no thread decoration, just let the sub-agent
-        // print its own chat header via the 'thinking' event
-        break
-
       case 'thread_message':
-        // Not used in streaming mode — deltas handle this
-        break
-
       case 'thread_end':
-        // No decoration needed in flat style
         break
 
       case 'synthesis_start': {
         this.stopSpinner()
-        this.printChatHeader(event.agent)
         this.currentAgent = event.agent
-        const agentColor = this.agents[event.agent]?.color ?? 'magenta'
+        this.needsPrefix = true
+        const agent = this.agents[event.agent]
+        if (!agent) break
+        const color = getColor(agent.color)
+        console.log() // blank line before agent message
         this.spinner = ora({
-          text: 'synthesizing...',
-          color: getOraColor(agentColor) as any,
-          indent: 2,
+          text: `${color('●')} ${color.bold(agent.label)}: synthesizing...`,
+          color: getOraColor(agent.color) as any,
         }).start()
         break
       }
@@ -145,20 +159,6 @@ export class Renderer {
         this.stopSpinner()
         break
     }
-  }
-
-  /** Print a chat-style agent name header: ● Agent Name */
-  private printChatHeader(agentName: string): void {
-    const agent = this.agents[agentName]
-    if (!agent) return
-    const color = getColor(agent.color)
-    console.log()
-    console.log(`  ${color('●')} ${color.bold(agent.label)}`)
-  }
-
-  /** Print the agent header bar before the first master response. */
-  printAgentHeader(_agentName: string): void {
-    // No-op — headers are now printed per-message via 'thinking' event
   }
 
   /** Print the welcome screen. */
