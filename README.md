@@ -1,6 +1,6 @@
 # OpenSwarm
 
-A group chat for your AI agents. Works with almost any API OpenClaw supports — Gemini, OpenAI, Ollama, Groq, or your own endpoint. Agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
+A group chat for your AI agents. Works with almost any API OpenClaw supports — Anhtropic, Gemini, OpenAI, DeepSeek, Ollama, Groq, or your own endpoint. Agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
 
 ```bash
 npm install -g openswarm-cli
@@ -53,11 +53,11 @@ The wizard asks you to pick a provider, then walks you through creating agents. 
 | # | Provider | Free? | What you need |
 |---|----------|-------|---------------|
 | 1 | **Gemini** | Yes | API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| 2 | **OpenAI** | No | API key from [platform.openai.com](https://platform.openai.com) |
-| 3 | **Ollama** | Yes | [Ollama](https://ollama.com) running locally |
-| 4 | **Groq** | Yes (rate limited) | API key from [console.groq.com](https://console.groq.com) |
-| 5 | **OpenClaw** | Yes | OpenClaw instance running locally |
-| 6 | **Custom** | — | Any OpenAI-compatible endpoint |
+| 2 | **Anthropic** | No | API key from [platform.claude.com](https://platform.claude.com) |
+| 3 | **OpenAI** | No | API key from [platform.openai.com](https://platform.openai.com) |
+| 4 | **Ollama** | Yes | [Ollama](https://ollama.com) running locally |
+| 5 | **Groq** | Yes (rate limited) | API key from [console.groq.com](https://console.groq.com) |
+| 7 | **Custom** | — | Any compatible endpoint |
 
 ### Step 3: Add your API key
 
