@@ -1,6 +1,11 @@
 /** Configuration for a single agent in the swarm. */
 export interface AgentConfig {
-  url: string
+  /** OpenAI-compatible endpoint (required for direct API mode). */
+  url?: string
+  /** Path to an OpenClaw workspace directory (alternative to url). */
+  workspace?: string
+  /** Auto-assigned port for spawned workspace agents. */
+  port?: number
   token?: string
   label: string
   color: string
