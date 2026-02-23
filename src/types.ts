@@ -31,9 +31,9 @@ export type OrchestratorEvent =
   | { type: 'thinking'; agent: string }
   | { type: 'delta'; agent: string; content: string }
   | { type: 'done'; agent: string; content: string }
-  | { type: 'thread_start'; from: string; to: string; message: string }
-  | { type: 'thread_message'; agent: string; content: string }
-  | { type: 'thread_end'; from: string; to: string }
+  | { type: 'thread_start'; threadId: string; from: string; to: string; message: string }
+  | { type: 'thread_message'; threadId: string; agent: string; content: string }
+  | { type: 'thread_end'; threadId: string; from: string; to: string }
   | { type: 'synthesis_start'; agent: string }
   | { type: 'error'; agent: string; error: string }
   | { type: 'end' }
