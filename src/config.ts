@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { readFile, access, stat } from 'node:fs/promises'
+import { resolve, join } from 'node:path'
 import type { SwarmConfig } from './types.js'
 
 const DEFAULTS: Pick<SwarmConfig, 'maxMentionDepth' | 'sessionPrefix' | 'timeout'> = {
@@ -7,6 +7,9 @@ const DEFAULTS: Pick<SwarmConfig, 'maxMentionDepth' | 'sessionPrefix' | 'timeout
   sessionPrefix: 'openswarm',
   timeout: 120_000,
 }
+
+/** Starting port for auto-assigned workspace agents. */
+const BASE_PORT = 19001
 
 /** Load and validate a swarm config file. */
 export async function loadConfig(path: string): Promise<SwarmConfig> {
@@ -30,19 +33,54 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
     throw new Error('Config must have an "agents" object')
   }
 
+  let nextPort = BASE_PORT
+
   for (const [name, agent] of Object.entries(agents as Record<string, unknown>)) {
     if (!agent || typeof agent !== 'object') {
       throw new Error(`Agent "${name}" must be an object`)
     }
     const a = agent as Record<string, unknown>
-    if (!a.url || typeof a.url !== 'string') {
-      throw new Error(`Agent "${name}" must have a "url" string`)
+
+    // Must have url OR workspace (not both, not neither)
+    const hasUrl = typeof a.url === 'string' && a.url.length > 0
+    const hasWorkspace = typeof a.workspace === 'string' && a.workspace.length > 0
+
+    if (!hasUrl && !hasWorkspace) {
+      throw new Error(`Agent "${name}" must have a "url" or "workspace" field`)
     }
+
     if (!a.label || typeof a.label !== 'string') {
       throw new Error(`Agent "${name}" must have a "label" string`)
     }
     if (!a.color || typeof a.color !== 'string') {
       throw new Error(`Agent "${name}" must have a "color" string`)
+    }
+
+    // Validate workspace if specified
+    if (hasWorkspace) {
+      const wsPath = resolve(a.workspace as string)
+      try {
+        const s = await stat(wsPath)
+        if (!s.isDirectory()) {
+          throw new Error(`Agent "${name}" workspace is not a directory: ${wsPath}`)
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new Error(`Agent "${name}" workspace not found: ${wsPath}`)
+        }
+        throw err
+      }
+
+      // Check for openclaw.json in the workspace
+      const clawConfig = join(wsPath, 'openclaw.json')
+      try {
+        await access(clawConfig)
+      } catch {
+        throw new Error(`Agent "${name}" workspace missing openclaw.json: ${clawConfig}`)
+      }
+
+      // Auto-assign port
+      a.port = nextPort++
     }
   }
 
@@ -64,18 +102,23 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
     timeout: typeof json.timeout === 'number' ? json.timeout : DEFAULTS.timeout,
   }
 
-  // Auto-inject system prompts if missing
+  // Auto-inject system prompts only for url-mode agents
   injectDefaultPrompts(config)
+
+  // For workspace agents, inject teamwork @mention instructions into SOUL.md context
+  await injectWorkspaceTeamwork(config)
 
   return config
 }
 
 /**
- * Auto-generate system prompts for agents that don't have one.
+ * Auto-generate system prompts for url-mode agents that don't have one.
  *
  * The master gets instructions about delegating via @mentions.
  * Non-master agents get instructions about their role and how to
  * collaborate with other agents via @mentions.
+ *
+ * Workspace agents are skipped — they use SOUL.md instead.
  */
 function injectDefaultPrompts(config: SwarmConfig): void {
   const masterAgent = config.agents[config.master]
@@ -86,8 +129,8 @@ function injectDefaultPrompts(config: SwarmConfig): void {
     .map(([name, agent]) => `  - @${name} (${agent.label})`)
     .join('\n')
 
-  // Master prompt: delegate via @mentions
-  if (!masterAgent.systemPrompt && otherAgents.length > 0) {
+  // Master prompt: delegate via @mentions (only for url-mode agents)
+  if (!masterAgent.systemPrompt && !masterAgent.workspace && otherAgents.length > 0) {
     masterAgent.systemPrompt = [
       `You are ${masterAgent.label}, the coordinator of a team of AI agents.`,
       `Your job is to understand the user's request and delegate tasks to your team members using @mentions.`,
@@ -108,9 +151,9 @@ function injectDefaultPrompts(config: SwarmConfig): void {
     ].join('\n')
   }
 
-  // Non-master prompts: know they're specialists, can @mention others
+  // Non-master prompts: know they're specialists, can @mention others (url-mode only)
   for (const [name, agent] of otherAgents) {
-    if (agent.systemPrompt) continue
+    if (agent.systemPrompt || agent.workspace) continue
 
     const peers = Object.entries(config.agents)
       .filter(([n]) => n !== name)
@@ -125,5 +168,43 @@ function injectDefaultPrompts(config: SwarmConfig): void {
       `If you need help from another team member, @mention them: ${peers}`,
       `Only @mention others when you genuinely need their specific expertise.`,
     ].join('\n')
+  }
+}
+
+/**
+ * For workspace agents, read SOUL.md and store as systemPrompt for display context.
+ * This doesn't modify SOUL.md on disk — the OpenClaw gateway reads it directly.
+ */
+async function injectWorkspaceTeamwork(config: SwarmConfig): Promise<void> {
+  for (const [name, agent] of Object.entries(config.agents)) {
+    if (!agent.workspace) continue
+
+    // Read SOUL.md for display context
+    const soulPath = join(resolve(agent.workspace), 'workspace', 'SOUL.md')
+    try {
+      const soul = await readFile(soulPath, 'utf-8')
+      // Store first paragraph as display context (don't use as systemPrompt for API)
+      const firstPara = soul.split('\n\n')[0]?.trim()
+      if (firstPara && !agent.systemPrompt) {
+        agent.systemPrompt = firstPara
+      }
+    } catch {
+      // No SOUL.md — that's fine
+    }
+
+    // Read gateway token from openclaw.json
+    if (!agent.token) {
+      try {
+        const clawConfigPath = join(resolve(agent.workspace), 'openclaw.json')
+        const clawRaw = await readFile(clawConfigPath, 'utf-8')
+        const clawJson = JSON.parse(clawRaw)
+        const token = clawJson?.gateway?.auth?.token
+        if (typeof token === 'string') {
+          agent.token = token
+        }
+      } catch {
+        // No token configured — gateway might not require auth
+      }
+    }
   }
 }

@@ -284,8 +284,10 @@ export class Renderer {
       const color = getColor(agent.color)
       const role = name === masterName ? ' (master)' : ''
       const dot = color('●')
-      const model = agent.model ? chalk.dim(` [${agent.model}]`) : ''
-      console.log(`  ${dot} ${color.bold(agent.label)}${chalk.dim(role)}${model}`)
+      const detail = agent.workspace
+        ? chalk.dim(' [OpenClaw]')
+        : agent.model ? chalk.dim(` [${agent.model}]`) : ''
+      console.log(`  ${dot} ${color.bold(agent.label)}${chalk.dim(role)}${detail}`)
     }
 
     console.log()

@@ -23,10 +23,17 @@ export class OpenClawConnection extends EventEmitter {
     super()
     this.name = name
     this.config = config
-    this.baseUrl = config.url
 
-    // Prepend system prompt to history if configured
-    if (config.systemPrompt) {
+    // Workspace agents: derive URL from auto-assigned port
+    if (config.workspace && config.port) {
+      this.baseUrl = `http://localhost:${config.port}/v1`
+    } else {
+      this.baseUrl = config.url ?? ''
+    }
+
+    // Prepend system prompt to history if configured (url-mode only;
+    // workspace agents get their system prompt from SOUL.md via OpenClaw)
+    if (config.systemPrompt && !config.workspace) {
       this.history.push({ role: 'system', content: config.systemPrompt })
     }
   }
