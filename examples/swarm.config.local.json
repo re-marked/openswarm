@@ -1,0 +1,26 @@
+{
+  "agents": {
+    "master": {
+      "url": "ws://localhost:18789",
+      "token": "swarm-local",
+      "label": "Master",
+      "color": "indigo"
+    },
+    "researcher": {
+      "url": "ws://localhost:18790",
+      "token": "swarm-local",
+      "label": "Researcher",
+      "color": "green"
+    },
+    "coder": {
+      "url": "ws://localhost:18791",
+      "token": "swarm-local",
+      "label": "Coder",
+      "color": "amber"
+    }
+  },
+  "master": "master",
+  "maxMentionDepth": 3,
+  "sessionPrefix": "swarm",
+  "timeout": 120000
+}

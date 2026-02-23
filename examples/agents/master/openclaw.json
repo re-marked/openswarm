@@ -1,0 +1,48 @@
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "workspace": "/data/workspace"
+      }
+    ],
+    "defaults": {
+      "model": {
+        "primary": "google/gemini-3-flash-preview"
+      },
+      "sandbox": {
+        "mode": "off"
+      }
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "allow": ["exec", "web_search", "read", "write", "edit"],
+    "deny": ["browser", "gateway", "cron"],
+    "elevated": {
+      "enabled": false
+    }
+  },
+  "skills": {
+    "allowBundled": []
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "bind": "lan",
+    "auth": {
+      "mode": "token"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses": { "enabled": true }
+      }
+    },
+    "controlUi": {
+      "dangerouslyDisableDeviceAuth": true,
+      "allowInsecureAuth": true
+    }
+  }
+}

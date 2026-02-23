@@ -1,0 +1,54 @@
+# Spin up 3 local OpenClaw instances for swarm-cli testing.
+# Usage: docker compose -f examples/docker-compose.yml up
+
+services:
+  master:
+    image: ghcr.io/openclaw/openclaw:latest
+    ports:
+      - "18789:18789"
+    volumes:
+      - ./agents/master/openclaw.json:/data/openclaw.json:ro
+      - ./agents/master/workspace/SOUL.md:/data/workspace/SOUL.md:ro
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=1536
+      - OPENCLAW_STATE_DIR=/data
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=swarm-local
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  researcher:
+    image: ghcr.io/openclaw/openclaw:latest
+    ports:
+      - "18790:18790"
+    volumes:
+      - ./agents/researcher/openclaw.json:/data/openclaw.json:ro
+      - ./agents/researcher/workspace/SOUL.md:/data/workspace/SOUL.md:ro
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=1536
+      - OPENCLAW_STATE_DIR=/data
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=swarm-local
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  coder:
+    image: ghcr.io/openclaw/openclaw:latest
+    ports:
+      - "18791:18791"
+    volumes:
+      - ./agents/coder/openclaw.json:/data/openclaw.json:ro
+      - ./agents/coder/workspace/SOUL.md:/data/workspace/SOUL.md:ro
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=1536
+      - OPENCLAW_STATE_DIR=/data
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=swarm-local
+    deploy:
+      resources:
+        limits:
+          memory: 2048M

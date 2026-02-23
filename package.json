@@ -1,0 +1,27 @@
+{
+  "name": "swarm-cli",
+  "version": "0.1.0",
+  "description": "Multi-agent @mention orchestrator CLI for OpenClaw",
+  "type": "module",
+  "bin": {
+    "swarm-cli": "./dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "ora": "^8.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
