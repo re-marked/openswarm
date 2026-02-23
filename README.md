@@ -1,6 +1,6 @@
 # OpenSwarm
 
-A group chat for your AI agents. Works with almost any API OpenClaw supports — Gemini, OpenAI, Ollama, Groq, OpenClaw, or your own endpoint. Agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
+A group chat for your AI agents. Works with almost any API OpenClaw supports — Gemini, OpenAI, Ollama, Groq, or your own endpoint. Agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
 
 ```bash
 npm install -g openswarm-cli
