@@ -1,6 +1,6 @@
 # OpenSwarm
 
-A group chat for your AI agents. Connect OpenClaw, Gemini, OpenAI, or any OpenAI-compatible API — agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
+A group chat for your AI agents. Works with any OpenAI-compatible API — Gemini, OpenAI, Ollama, Groq, OpenClaw, or your own endpoint. Agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
 
 ```bash
 npm install -g openswarm-cli
@@ -39,34 +39,88 @@ npm install -g openswarm-cli
 
 Requires Node.js 20+.
 
-### Step 2: Get a Gemini API key (free)
-
-Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and create a key. It's free.
-
-### Step 3: Create your swarm
+### Step 2: Run the wizard
 
 ```bash
 mkdir my-swarm && cd my-swarm
 openswarm init
 ```
 
-The wizard asks how many agents you want, their names, and roles. Defaults work great — just press Enter through everything to get a 3-agent team (Master + Researcher + Coder) using Gemini.
+The wizard asks you to pick a provider, then walks you through creating agents. Defaults work great — just press Enter to get a 3-agent team (Master + Researcher + Coder).
 
-### Step 4: Add your API key
+**Supported providers out of the box:**
+
+| # | Provider | Free? | What you need |
+|---|----------|-------|---------------|
+| 1 | **Gemini** | Yes | API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| 2 | **OpenAI** | No | API key from [platform.openai.com](https://platform.openai.com) |
+| 3 | **Ollama** | Yes | [Ollama](https://ollama.com) running locally |
+| 4 | **Groq** | Yes (rate limited) | API key from [console.groq.com](https://console.groq.com) |
+| 5 | **OpenClaw** | Yes | OpenClaw instance running locally |
+| 6 | **Custom** | — | Any OpenAI-compatible endpoint |
+
+### Step 3: Add your API key
 
 ```bash
-echo GOOGLE_API_KEY=your-key-here > .env
+echo YOUR_API_KEY_VAR=your-key-here > .env
 ```
 
-Replace `your-key-here` with the key from Step 2.
+The wizard tells you which env var to use for your provider. Examples:
 
-### Step 5: Start chatting
+```bash
+# Gemini
+echo GOOGLE_API_KEY=AIza... > .env
+
+# OpenAI
+echo OPENAI_API_KEY=sk-... > .env
+
+# Groq
+echo GROQ_API_KEY=gsk_... > .env
+```
+
+Ollama and local OpenClaw don't need a key.
+
+### Step 4: Start chatting
 
 ```bash
 openswarm
 ```
 
-That's it. Ask a question and watch your agents collaborate.
+---
+
+## Mix and Match Providers
+
+Each agent gets its own `url` and `model`. You can mix providers freely — master on Gemini, coder on OpenAI, researcher on local Ollama:
+
+```json
+{
+  "agents": {
+    "master": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "label": "Master",
+      "color": "indigo",
+      "model": "gemini-2.5-flash"
+    },
+    "researcher": {
+      "url": "http://localhost:11434/v1",
+      "label": "Researcher",
+      "color": "green",
+      "model": "llama3"
+    },
+    "coder": {
+      "url": "https://api.openai.com/v1",
+      "label": "Coder",
+      "color": "amber",
+      "model": "gpt-4o"
+    }
+  },
+  "master": "master"
+}
+```
+
+OpenSwarm reads all `*_API_KEY` env vars from `.env` and injects them into any agent that doesn't have its own `token` set.
+
+Supported env vars: `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`.
 
 ---
 
@@ -129,34 +183,6 @@ openswarm --session 20260223-abc123
 
 `openswarm init` generates `swarm.config.json` for you. Here's the full format if you want to edit it manually:
 
-```json
-{
-  "agents": {
-    "master": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "label": "Master",
-      "color": "indigo",
-      "model": "gemini-2.5-flash"
-    },
-    "researcher": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "label": "Researcher",
-      "color": "green",
-      "model": "gemini-2.5-flash"
-    },
-    "coder": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "label": "Coder",
-      "color": "amber",
-      "model": "gemini-2.5-flash"
-    }
-  },
-  "master": "master",
-  "maxMentionDepth": 3,
-  "timeout": 120000
-}
-```
-
 ### Agent fields
 
 | Field | Required | Description |
@@ -164,7 +190,7 @@ openswarm --session 20260223-abc123
 | `url` | Yes | OpenAI-compatible chat completions endpoint |
 | `label` | Yes | Display name in terminal |
 | `color` | Yes | Terminal color (`indigo`, `green`, `amber`, `cyan`, `purple`, `red`, `blue`, `pink`) |
-| `model` | No | Model name (e.g. `gemini-2.5-flash`, `gpt-4o`) |
+| `model` | No | Model name (e.g. `gemini-2.5-flash`, `gpt-4o`, `llama3`) |
 | `token` | No | Auth token (Bearer header). Auto-filled from `.env` if not set |
 | `systemPrompt` | No | Custom system prompt. Auto-generated if not set |
 
@@ -179,32 +205,22 @@ openswarm --session 20260223-abc123
 
 ---
 
-## .env File
-
-OpenSwarm reads `.env` from the current directory automatically:
-
-```bash
-GOOGLE_API_KEY=your-gemini-key
-OPENAI_API_KEY=sk-your-openai-key
-```
-
-Keys are injected into any agent that doesn't have its own `token` set in the config. Supports comments (`#`), `export` prefix, and quoted values.
-
----
-
 ## Compatible APIs
 
-Works with anything that speaks the OpenAI chat completions format:
+Works with anything that speaks the OpenAI chat completions format (`/v1/chat/completions`):
 
-| Provider | URL | Model |
-|----------|-----|-------|
-| **Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash` |
-| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o` |
+| Provider | URL | Model examples |
+|----------|-----|----------------|
+| **Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash`, `gemini-2.5-pro` |
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o`, `gpt-4o-mini` |
+| **Ollama** | `http://localhost:11434/v1` | `llama3`, `mistral`, `codellama` |
+| **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-chat`, `deepseek-coder` |
+| **Together** | `https://api.together.xyz/v1` | `meta-llama/Llama-3-70b-chat-hf` |
+| **Fireworks** | `https://api.fireworks.ai/inference/v1` | `accounts/fireworks/models/llama-v3p1-70b-instruct` |
+| **Mistral** | `https://api.mistral.ai/v1` | `mistral-large-latest` |
 | **OpenClaw** | `http://localhost:18789/v1` | (agent's own model) |
-| **Ollama** | `http://localhost:11434/v1` | `llama3` |
-| **Any compatible** | `https://your-endpoint/v1` | your-model |
-
-You can mix providers — master on Gemini, coder on OpenAI, researcher on a local Ollama. Each agent gets its own `url` and `model`.
+| **OpenRouter** | `https://openrouter.ai/api/v1` | any model on OpenRouter |
 
 ---
 

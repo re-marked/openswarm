@@ -84,7 +84,16 @@ async function main() {
   }
 
   // --- Inject API key from env if agents don't have tokens ---
-  const envKey = process.env.GOOGLE_API_KEY ?? process.env.OPENAI_API_KEY
+  const envKey =
+    process.env.GOOGLE_API_KEY ??
+    process.env.OPENAI_API_KEY ??
+    process.env.GROQ_API_KEY ??
+    process.env.ANTHROPIC_API_KEY ??
+    process.env.TOGETHER_API_KEY ??
+    process.env.FIREWORKS_API_KEY ??
+    process.env.DEEPSEEK_API_KEY ??
+    process.env.MISTRAL_API_KEY ??
+    process.env.OPENCLAW_GATEWAY_TOKEN
   if (envKey) {
     for (const agent of Object.values(config.agents)) {
       if (!agent.token) {

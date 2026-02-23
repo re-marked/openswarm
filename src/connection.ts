@@ -45,7 +45,7 @@ export class OpenClawConnection extends EventEmitter {
         method: 'POST',
         headers: this.buildHeaders(),
         body: JSON.stringify({
-          model: this.config.model ?? 'gemini-2.5-flash',
+          model: this.config.model ?? 'default',
           messages: [{ role: 'user', content: 'Reply with OK' }],
           stream: false,
           max_tokens: 3,
@@ -79,7 +79,7 @@ export class OpenClawConnection extends EventEmitter {
         method: 'POST',
         headers: this.buildHeaders(),
         body: JSON.stringify({
-          model: this.config.model ?? 'gemini-2.5-flash',
+          model: this.config.model ?? 'default',
           messages: this.history,
           stream: true,
         }),
