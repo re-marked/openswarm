@@ -1,5 +1,6 @@
 import chalk, { type ChalkInstance } from 'chalk'
 import ora, { type Ora } from 'ora'
+import { renderMarkdown } from './markdown.js'
 import type { AgentConfig, OrchestratorEvent } from './types.js'
 
 /** Map color names from config to chalk functions. */
@@ -24,6 +25,8 @@ function getColor(colorName: string): ChalkInstance {
 export class Renderer {
   private agents: Record<string, AgentConfig>
   private spinner: Ora | null = null
+  private streamBuffer = ''
+  private streamLineCount = 0
 
   constructor(agents: Record<string, AgentConfig>) {
     this.agents = agents
@@ -59,12 +62,28 @@ export class Renderer {
 
       case 'delta':
         this.stopSpinner()
+        // Stream raw text for live feel, buffer for markdown reprint on done
+        this.streamBuffer += event.content
+        // Count newlines for clearing
+        const newlines = (event.content.match(/\n/g) || []).length
+        this.streamLineCount += newlines
         process.stdout.write(event.content)
         break
 
-      case 'done':
-        process.stdout.write('\n')
+      case 'done': {
+        // Clear the raw streamed text and reprint with markdown formatting
+        const raw = this.streamBuffer
+        if (raw) {
+          // Move cursor up to overwrite raw streamed output
+          const lineCount = this.streamLineCount + 1
+          process.stdout.write(`\x1b[${lineCount}A\x1b[0J`)
+          // Print markdown-formatted version
+          console.log(renderMarkdown(raw))
+        }
+        this.streamBuffer = ''
+        this.streamLineCount = 0
         break
+      }
 
       case 'thread_start': {
         this.stopSpinner()
