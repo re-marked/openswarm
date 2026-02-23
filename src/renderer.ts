@@ -15,18 +15,38 @@ const COLOR_MAP: Record<string, ChalkInstance> = {
   pink: chalk.rgb(236, 72, 153),
 }
 
+/** Map color names to ora spinner colors. */
+const ORA_COLOR_MAP: Record<string, string> = {
+  indigo: 'magenta',
+  green: 'green',
+  amber: 'yellow',
+  cyan: 'cyan',
+  purple: 'magenta',
+  red: 'red',
+  blue: 'blue',
+  pink: 'magenta',
+}
+
 function getColor(colorName: string): ChalkInstance {
   return COLOR_MAP[colorName] ?? chalk.white
 }
 
+function getOraColor(colorName: string): string {
+  return ORA_COLOR_MAP[colorName] ?? 'white'
+}
+
 /**
- * Renders orchestrator events to the terminal with color and formatting.
+ * Flat group-chat style renderer.
+ *
+ * Each agent message gets a colored name header (like Discord),
+ * all at the same level — no threading or nesting.
  */
 export class Renderer {
   private agents: Record<string, AgentConfig>
   private spinner: Ora | null = null
   private streamBuffer = ''
   private streamLineCount = 0
+  private currentAgent = ''
 
   constructor(agents: Record<string, AgentConfig>) {
     this.agents = agents
@@ -35,13 +55,15 @@ export class Renderer {
   /** Handle an orchestrator event. */
   handle(event: OrchestratorEvent): void {
     switch (event.type) {
-      case 'connecting':
+      case 'connecting': {
         this.stopSpinner()
+        const agentColor = this.agents[event.agent]?.color ?? 'cyan'
         this.spinner = ora({
           text: `Connecting to ${this.label(event.agent)}...`,
-          color: 'cyan',
+          color: getOraColor(agentColor) as any,
         }).start()
         break
+      }
 
       case 'connected':
         this.stopSpinner()
@@ -52,89 +74,71 @@ export class Renderer {
         console.log(chalk.red(`  Connection failed: ${event.agent} — ${event.error}`))
         break
 
-      case 'thinking':
+      case 'thinking': {
         this.stopSpinner()
+        // Print agent name header before the spinner
+        this.printChatHeader(event.agent)
+        this.currentAgent = event.agent
+        const agentColor = this.agents[event.agent]?.color ?? 'yellow'
         this.spinner = ora({
-          text: `${this.label(event.agent)} is thinking...`,
-          color: 'yellow',
+          text: 'thinking...',
+          color: getOraColor(agentColor) as any,
+          indent: 2,
         }).start()
         break
+      }
 
       case 'delta':
         this.stopSpinner()
-        // Stream raw text for live feel, buffer for markdown reprint on done
         this.streamBuffer += event.content
-        // Count newlines for clearing
         const newlines = (event.content.match(/\n/g) || []).length
         this.streamLineCount += newlines
         process.stdout.write(event.content)
         break
 
       case 'done': {
-        // Clear the raw streamed text and reprint with markdown formatting
+        // Clear raw streamed text, reprint with markdown
         const raw = this.streamBuffer
         if (raw) {
-          // Move cursor up to overwrite raw streamed output
           const lineCount = this.streamLineCount + 1
           process.stdout.write(`\x1b[${lineCount}A\x1b[0J`)
-          // Print markdown-formatted version
           console.log(renderMarkdown(raw))
         }
         this.streamBuffer = ''
         this.streamLineCount = 0
+        this.currentAgent = ''
         break
       }
 
-      case 'thread_start': {
+      case 'thread_start':
+        // Flat style — no thread decoration, just let the sub-agent
+        // print its own chat header via the 'thinking' event
+        break
+
+      case 'thread_message':
+        // Not used in streaming mode — deltas handle this
+        break
+
+      case 'thread_end':
+        // No decoration needed in flat style
+        break
+
+      case 'synthesis_start': {
         this.stopSpinner()
-        const fromColor = getColor(this.agents[event.from]?.color ?? 'white')
-        const toColor = getColor(this.agents[event.to]?.color ?? 'white')
-        const fromLabel = this.label(event.from)
-        const toLabel = this.label(event.to)
-        console.log()
-        console.log(
-          toColor('  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'),
-        )
-        console.log(
-          toColor('  ┃ ') +
-            chalk.bold(`Thread: ${fromLabel} → @${toLabel}`),
-        )
-        console.log(toColor('  ┃'))
-        break
-      }
-
-      case 'thread_message': {
-        const agentColor = getColor(this.agents[event.agent]?.color ?? 'white')
-        const label = this.label(event.agent)
-        console.log(agentColor('  ┃ ') + agentColor.bold(label))
-        // Print message lines with border
-        for (const line of event.content.split('\n')) {
-          console.log(agentColor('  ┃ ') + line)
-        }
-        break
-      }
-
-      case 'thread_end': {
-        const toColor = getColor(this.agents[event.to]?.color ?? 'white')
-        console.log(toColor('  ┃'))
-        console.log(
-          toColor('  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'),
-        )
-        console.log()
-        break
-      }
-
-      case 'synthesis_start':
-        this.stopSpinner()
+        this.printChatHeader(event.agent)
+        this.currentAgent = event.agent
+        const agentColor = this.agents[event.agent]?.color ?? 'magenta'
         this.spinner = ora({
-          text: `${this.label(event.agent)} is synthesizing...`,
-          color: 'magenta',
+          text: 'synthesizing...',
+          color: getOraColor(agentColor) as any,
+          indent: 2,
         }).start()
         break
+      }
 
       case 'error':
         this.stopSpinner()
-        console.log(chalk.red(`\n  Error (${event.agent}): ${event.error}`))
+        console.log(chalk.red(`  Error (${event.agent}): ${event.error}`))
         break
 
       case 'end':
@@ -143,16 +147,18 @@ export class Renderer {
     }
   }
 
-  /** Print the agent header bar before a response. */
-  printAgentHeader(agentName: string): void {
+  /** Print a chat-style agent name header: ● Agent Name */
+  private printChatHeader(agentName: string): void {
     const agent = this.agents[agentName]
     if (!agent) return
     const color = getColor(agent.color)
-    const label = agent.label
-    const bar = '━'.repeat(Math.max(0, 50 - label.length))
     console.log()
-    console.log(color.bold(`${label} ${bar}`))
-    console.log()
+    console.log(`  ${color('●')} ${color.bold(agent.label)}`)
+  }
+
+  /** Print the agent header bar before the first master response. */
+  printAgentHeader(_agentName: string): void {
+    // No-op — headers are now printed per-message via 'thinking' event
   }
 
   /** Print the welcome screen. */
