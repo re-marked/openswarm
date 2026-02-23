@@ -2,7 +2,7 @@
 
 Multi-agent @mention orchestrator CLI for [OpenClaw](https://openclaw.com).
 
-Connect to real OpenClaw instances (or any OpenAI-compatible API), type a message, and watch agents collaborate through @mentions with rich colored terminal output.
+Connect to real OpenClaw instances (or any other API), type a message, and watch agents collaborate through @mentions with rich colored terminal output.
 
 ```
 you > Can you research the latest AI agent trends and build a demo?
