@@ -1,17 +1,23 @@
 # Spin up 3 local OpenClaw instances for swarm-cli testing.
 # Usage: docker compose -f examples/docker-compose.yml up
+#
+# NOTE: Docker Desktop on Windows mangles HTTP POST through port forwarding,
+# so we use an nginx reverse proxy to reach the OpenClaw HTTP API.
+# CLI connects to localhost:28789/28790/28791 (proxy ports).
 
 services:
   master:
     image: ghcr.io/openclaw/openclaw:latest
-    ports:
-      - "18789:18789"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     volumes:
       - ./agents/master/openclaw.json:/data/openclaw.json:ro
-      - ./agents/master/workspace/SOUL.md:/data/workspace/SOUL.md:ro
+      - ./agents/master/workspace:/data/workspace
+      - ./entrypoint.sh:/entrypoint.sh:ro
     environment:
       - NODE_OPTIONS=--max-old-space-size=1536
       - OPENCLAW_STATE_DIR=/data
+      - OPENCLAW_PORT=18789
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OPENCLAW_GATEWAY_TOKEN=swarm-local
     deploy:
@@ -21,14 +27,16 @@ services:
 
   researcher:
     image: ghcr.io/openclaw/openclaw:latest
-    ports:
-      - "18790:18790"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     volumes:
       - ./agents/researcher/openclaw.json:/data/openclaw.json:ro
-      - ./agents/researcher/workspace/SOUL.md:/data/workspace/SOUL.md:ro
+      - ./agents/researcher/workspace:/data/workspace
+      - ./entrypoint.sh:/entrypoint.sh:ro
     environment:
       - NODE_OPTIONS=--max-old-space-size=1536
       - OPENCLAW_STATE_DIR=/data
+      - OPENCLAW_PORT=18790
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OPENCLAW_GATEWAY_TOKEN=swarm-local
     deploy:
@@ -38,17 +46,35 @@ services:
 
   coder:
     image: ghcr.io/openclaw/openclaw:latest
-    ports:
-      - "18791:18791"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     volumes:
       - ./agents/coder/openclaw.json:/data/openclaw.json:ro
-      - ./agents/coder/workspace/SOUL.md:/data/workspace/SOUL.md:ro
+      - ./agents/coder/workspace:/data/workspace
+      - ./entrypoint.sh:/entrypoint.sh:ro
     environment:
       - NODE_OPTIONS=--max-old-space-size=1536
       - OPENCLAW_STATE_DIR=/data
+      - OPENCLAW_PORT=18791
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OPENCLAW_GATEWAY_TOKEN=swarm-local
     deploy:
       resources:
         limits:
           memory: 2048M
+
+  # Nginx reverse proxy — sits inside the Docker network so HTTP POST
+  # to OpenClaw's /v1/chat/completions works (bypasses Docker Desktop
+  # port forwarding issue on Windows).
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "28789:28789"
+      - "28790:28790"
+      - "28791:28791"
+    volumes:
+      - ./proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - master
+      - researcher
+      - coder

@@ -1,19 +1,19 @@
 {
   "agents": {
     "master": {
-      "url": "ws://localhost:18789",
+      "url": "http://localhost:28789/v1",
       "token": "swarm-local",
       "label": "Master",
       "color": "indigo"
     },
     "researcher": {
-      "url": "ws://localhost:18790",
+      "url": "http://localhost:28790/v1",
       "token": "swarm-local",
       "label": "Researcher",
       "color": "green"
     },
     "coder": {
-      "url": "ws://localhost:18791",
+      "url": "http://localhost:28791/v1",
       "token": "swarm-local",
       "label": "Coder",
       "color": "amber"

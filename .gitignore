@@ -2,3 +2,12 @@ node_modules/
 dist/
 swarm.config.json
 *.log
+
+# OpenClaw generated workspace files (kept only SOUL.md)
+examples/agents/*/workspace/.openclaw/
+examples/agents/*/workspace/AGENTS.md
+examples/agents/*/workspace/BOOTSTRAP.md
+examples/agents/*/workspace/HEARTBEAT.md
+examples/agents/*/workspace/IDENTITY.md
+examples/agents/*/workspace/TOOLS.md
+examples/agents/*/workspace/USER.md
