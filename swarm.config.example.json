@@ -1,26 +1,20 @@
 {
   "agents": {
     "master": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "workspace": "./agents/master",
       "label": "Master",
-      "color": "indigo",
-      "model": "gemini-2.5-flash"
+      "color": "indigo"
     },
     "researcher": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "workspace": "./agents/researcher",
       "label": "Researcher",
-      "color": "green",
-      "model": "gemini-2.5-flash"
+      "color": "green"
     },
     "coder": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "workspace": "./agents/coder",
       "label": "Coder",
-      "color": "amber",
-      "model": "gemini-2.5-flash"
+      "color": "amber"
     }
   },
-  "master": "master",
-  "maxMentionDepth": 3,
-  "sessionPrefix": "openswarm",
-  "timeout": 120000
+  "master": "master"
 }
