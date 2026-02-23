@@ -1,4 +1,4 @@
-# Spin up 3 local OpenClaw instances for swarm-cli testing.
+# Spin up 3 local OpenClaw instances for OpenSwarm testing.
 # Usage: docker compose -f examples/docker-compose.yml up
 #
 # NOTE: Docker Desktop on Windows mangles HTTP POST through port forwarding,

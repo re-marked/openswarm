@@ -1,10 +1,10 @@
 {
-  "name": "swarm-cli",
+  "name": "openswarm",
   "version": "0.1.0",
   "description": "Multi-agent @mention orchestrator CLI for OpenClaw",
   "type": "module",
   "bin": {
-    "swarm-cli": "./dist/cli.js"
+    "openswarm": "./dist/cli.js"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",

@@ -18,6 +18,6 @@
   },
   "master": "master",
   "maxMentionDepth": 3,
-  "sessionPrefix": "swarm",
+  "sessionPrefix": "openswarm",
   "timeout": 120000
 }

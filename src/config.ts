@@ -4,7 +4,7 @@ import type { SwarmConfig } from './types.js'
 
 const DEFAULTS: Pick<SwarmConfig, 'maxMentionDepth' | 'sessionPrefix' | 'timeout'> = {
   maxMentionDepth: 3,
-  sessionPrefix: 'swarm',
+  sessionPrefix: 'openswarm',
   timeout: 120_000,
 }
 
