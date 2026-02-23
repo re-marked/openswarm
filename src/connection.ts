@@ -99,6 +99,7 @@ export class OpenClawConnection extends EventEmitter {
 
     // Parse SSE stream
     let fullText = ''
+    const activeToolCalls = new Map<string, { name: string; args: string }>()
     try {
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -121,10 +122,54 @@ export class OpenClawConnection extends EventEmitter {
 
           try {
             const chunk = JSON.parse(data)
-            const delta = chunk.choices?.[0]?.delta?.content
+            const choice = chunk.choices?.[0]
+
+            // Track tool calls
+            const toolCalls = choice?.delta?.tool_calls
+            if (toolCalls && Array.isArray(toolCalls)) {
+              for (const tc of toolCalls) {
+                const id = tc.id
+                const fnName = tc.function?.name
+                if (id && fnName && !activeToolCalls.has(id)) {
+                  activeToolCalls.set(id, { name: fnName, args: '' })
+                  this.emit('tool_start', { name: fnName, id })
+                }
+                // Accumulate arguments
+                if (tc.id && tc.function?.arguments) {
+                  const existing = activeToolCalls.get(tc.id)
+                  if (existing) {
+                    existing.args += tc.function.arguments
+                  }
+                } else if (tc.index !== undefined && tc.function?.arguments) {
+                  // Some APIs use index-based tool call streaming
+                  for (const [, entry] of activeToolCalls) {
+                    entry.args += tc.function.arguments
+                    break
+                  }
+                }
+              }
+            }
+
+            // Content delta — if we had active tools and content resumes, tools ended
+            const delta = choice?.delta?.content
+            if (delta && activeToolCalls.size > 0) {
+              for (const [id, { name }] of activeToolCalls) {
+                this.emit('tool_end', { name, id })
+              }
+              activeToolCalls.clear()
+            }
+
             if (delta) {
               fullText += delta
               this.emit('delta', delta)
+            }
+
+            // finish_reason signals end — close any remaining tools
+            if (choice?.finish_reason && activeToolCalls.size > 0) {
+              for (const [id, { name }] of activeToolCalls) {
+                this.emit('tool_end', { name, id })
+              }
+              activeToolCalls.clear()
             }
           } catch {
             // Skip unparseable chunks
@@ -137,12 +182,28 @@ export class OpenClawConnection extends EventEmitter {
       if (!fullText) return null
     }
 
+    // End any tool calls still active when stream ends
+    for (const [id, { name }] of activeToolCalls) {
+      this.emit('tool_end', { name, id })
+    }
+    activeToolCalls.clear()
+
     // Add assistant response to history for multi-turn
     if (fullText) {
       this.history.push({ role: 'assistant', content: fullText })
     }
 
     return fullText || null
+  }
+
+  /** Get the conversation history (for session persistence). */
+  getHistory(): Array<{ role: string; content: string }> {
+    return [...this.history]
+  }
+
+  /** Replace conversation history (for session restore). */
+  setHistory(history: Array<{ role: string; content: string }>): void {
+    this.history = [...history]
   }
 
   private buildHeaders(): Record<string, string> {

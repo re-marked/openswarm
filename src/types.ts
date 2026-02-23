@@ -23,6 +23,34 @@ export interface MentionMatch {
   message: string
 }
 
+/** User message event for session recording. */
+export interface UserMessageEvent {
+  type: 'user_message'
+  content: string
+}
+
+/** A timestamped session event. */
+export interface SessionEvent {
+  timestamp: number
+  event: OrchestratorEvent | UserMessageEvent
+}
+
+/** Session metadata for listing. */
+export interface SessionMeta {
+  id: string
+  createdAt: number
+  updatedAt: number
+  preview: string
+}
+
+/** Full session data stored on disk. */
+export interface SessionData {
+  meta: SessionMeta
+  config: { master: string; agents: string[] }
+  events: SessionEvent[]
+  histories: Record<string, Array<{ role: string; content: string }>>
+}
+
 /** Events emitted by the orchestrator for the renderer to handle. */
 export type OrchestratorEvent =
   | { type: 'connecting'; agent: string }
@@ -30,10 +58,15 @@ export type OrchestratorEvent =
   | { type: 'connect_error'; agent: string; error: string }
   | { type: 'thinking'; agent: string }
   | { type: 'delta'; agent: string; content: string }
-  | { type: 'done'; agent: string; content: string }
-  | { type: 'thread_start'; from: string; to: string; message: string }
+  | { type: 'done'; agent: string; content: string; depth?: number }
+  | { type: 'tool_start'; agent: string; toolName: string; toolCallId: string }
+  | { type: 'tool_end'; agent: string; toolName: string; toolCallId: string }
+  | { type: 'thread_start'; from: string; to: string; message: string; depth?: number }
   | { type: 'thread_message'; agent: string; content: string }
-  | { type: 'thread_end'; from: string; to: string }
+  | { type: 'thread_end'; from: string; to: string; depth?: number }
   | { type: 'synthesis_start'; agent: string }
+  | { type: 'parallel_start'; agents: string[] }
+  | { type: 'parallel_progress'; agent: string; status: string; toolName?: string }
+  | { type: 'parallel_end'; results: Array<{ agent: string; content: string | null; error?: string }> }
   | { type: 'error'; agent: string; error: string }
   | { type: 'end' }

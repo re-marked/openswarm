@@ -1,16 +1,36 @@
 {
-  "name": "openswarm",
-  "version": "0.1.0",
+  "name": "openswarm-cli",
+  "version": "0.1.1",
   "description": "Multi-agent @mention orchestrator CLI for OpenClaw",
   "type": "module",
-  "bin": {
-    "openswarm": "./dist/cli.js"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/re-marked/openswarm.git"
   },
+  "keywords": [
+    "ai",
+    "agent",
+    "multi-agent",
+    "openclaw",
+    "cli",
+    "swarm",
+    "orchestrator"
+  ],
+  "bin": {
+    "openswarm": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "swarm.config.example.json"
+  ],
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsc",
     "start": "node dist/cli.js",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "chalk": "^5.4.1",

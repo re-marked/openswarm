@@ -1,29 +1,35 @@
 import { EventEmitter } from 'node:events'
+import { ResponseBuffer } from './buffer.js'
 import { OpenClawConnection } from './connection.js'
 import type { AgentConfig, MentionMatch, OrchestratorEvent, SwarmConfig } from './types.js'
 import { generateId } from './utils.js'
 
+/** Maximum total mentions processed per user message (safety valve). */
+const MAX_TOTAL_MENTIONS = 20
+
 /**
- * Orchestrates multi-agent @mention conversations.
+ * Orchestrates multi-agent @mention conversations with deep nesting.
  *
  * - Sends user messages to the master agent
- * - Detects @mentions in the master's response
- * - Routes mentions to specialist agents (in parallel)
- * - Sends thread results back to master for synthesis
- * - Repeats up to maxMentionDepth rounds
+ * - Detects @mentions in any agent's response
+ * - Routes mentions to other agents (in parallel, recursively)
+ * - Agents can @mention each other at any depth
+ * - Sends thread results back to the originating agent for synthesis
+ * - Per-branch visited set prevents cycles; global counter prevents explosion
  */
 export class Orchestrator extends EventEmitter {
   private config: SwarmConfig
   private connections: Map<string, OpenClawConnection> = new Map()
-  private agentNames: string[]
+  private connectingPromises: Map<string, Promise<OpenClawConnection | null>> = new Map()
+  private allAgentNames: string[]
   private mentionRegex: RegExp
 
   constructor(config: SwarmConfig) {
     super()
     this.config = config
-    // All agent names except master are mentionable
-    this.agentNames = Object.keys(config.agents).filter((n) => n !== config.master)
-    this.mentionRegex = new RegExp(`@(${this.agentNames.join('|')})\\b`, 'g')
+    // ALL agents are mentionable (any agent can mention any other)
+    this.allAgentNames = Object.keys(config.agents)
+    this.mentionRegex = new RegExp(`@(${this.allAgentNames.join('|')})\\b`, 'g')
   }
 
   /** Emit a typed event for the renderer. */
@@ -58,46 +64,80 @@ export class Orchestrator extends EventEmitter {
       return
     }
 
-    // Wire up delta streaming from master
+    // Wire up delta + tool streaming from master
     const masterDeltaHandler = (delta: string) => {
       this.fire({ type: 'delta', agent: this.config.master, content: delta })
     }
+    const masterToolStartHandler = (info: { name: string; id: string }) => {
+      this.fire({ type: 'tool_start', agent: this.config.master, toolName: info.name, toolCallId: info.id })
+    }
+    const masterToolEndHandler = (info: { name: string; id: string }) => {
+      this.fire({ type: 'tool_end', agent: this.config.master, toolName: info.name, toolCallId: info.id })
+    }
     masterConn.on('delta', masterDeltaHandler)
+    masterConn.on('tool_start', masterToolStartHandler)
+    masterConn.on('tool_end', masterToolEndHandler)
 
     this.fire({ type: 'thinking', agent: this.config.master })
 
     let lastText = await masterConn.sendMessage(userMessage)
     masterConn.removeListener('delta', masterDeltaHandler)
+    masterConn.removeListener('tool_start', masterToolStartHandler)
+    masterConn.removeListener('tool_end', masterToolEndHandler)
 
     if (lastText !== null) {
-      this.fire({ type: 'done', agent: this.config.master, content: lastText })
+      this.fire({ type: 'done', agent: this.config.master, content: lastText, depth: 0 })
     }
 
-    // --- Multi-turn @mention loop ---
-    let mentionDepth = 0
-    const mentionedAgents = new Set<string>()
+    // --- Multi-turn @mention loop (depth 0 = master level) ---
+    // Global mention counter shared across all recursive branches
+    const globalMentionCount = { value: 0 }
 
+    let mentionRound = 0
     while (lastText) {
-      // Extract NEW mentions only (dedup within and across rounds)
-      const seen = new Set(mentionedAgents)
-      const mentions = this.extractMentions(lastText).filter((m) => {
-        if (seen.has(m.agent)) return false
-        seen.add(m.agent)
-        return true
-      })
+      // Extract mentions, excluding self-mentions
+      const mentions = this.extractMentions(lastText, this.config.master)
 
-      if (mentions.length === 0 || mentionDepth >= this.config.maxMentionDepth) {
+      if (mentions.length === 0 || mentionRound >= this.config.maxMentionDepth) {
         break
       }
 
-      mentionDepth++
-      for (const m of mentions) mentionedAgents.add(m.agent)
+      mentionRound++
 
-      // Process mentions sequentially — parallel interleaves terminal output
-      const threadResults: (string | null)[] = []
-      for (const mention of mentions) {
-        threadResults.push(await this.processMention(mention))
+      // Check global safety valve
+      if (globalMentionCount.value + mentions.length > MAX_TOTAL_MENTIONS) {
+        break
       }
+      globalMentionCount.value += mentions.length
+
+      // Process mentions in parallel with recursive nesting
+      const buffer = new ResponseBuffer()
+      const agentNames = mentions.map((m) => m.agent)
+      for (const m of mentions) buffer.create(m.agent)
+
+      this.fire({ type: 'parallel_start', agents: agentNames })
+
+      const threadResults = await Promise.all(
+        mentions.map((mention) =>
+          this.processMentionRecursive(
+            mention,
+            this.config.master,
+            1, // depth starts at 1 for first-level mentions
+            new Set([this.config.master]), // visited: master already in the chain
+            buffer,
+            globalMentionCount
+          )
+        )
+      )
+
+      this.fire({
+        type: 'parallel_end',
+        results: mentions.map((m, i) => ({
+          agent: m.agent,
+          content: threadResults[i],
+          error: buffer.get(m.agent)?.error,
+        })),
+      })
 
       // Build synthesis message from thread results
       const threadReplies: string[] = []
@@ -116,11 +156,15 @@ export class Orchestrator extends EventEmitter {
       const followUpMessage = `[Thread] ${threadReplies.join('\n\n[Thread] ')}`
 
       masterConn.on('delta', masterDeltaHandler)
+      masterConn.on('tool_start', masterToolStartHandler)
+      masterConn.on('tool_end', masterToolEndHandler)
       lastText = await masterConn.sendMessage(followUpMessage)
       masterConn.removeListener('delta', masterDeltaHandler)
+      masterConn.removeListener('tool_start', masterToolStartHandler)
+      masterConn.removeListener('tool_end', masterToolEndHandler)
 
       if (lastText !== null) {
-        this.fire({ type: 'done', agent: this.config.master, content: lastText })
+        this.fire({ type: 'done', agent: this.config.master, content: lastText, depth: 0 })
       }
     }
 
@@ -128,82 +172,188 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
-   * Process a single @mention: connect to the agent, send the message,
-   * stream the response, emit thread events.
+   * Process a single @mention recursively.
+   *
+   * After the agent responds, scans for further @mentions (excluding self
+   * and agents already in this branch's visited set). Child mentions are
+   * processed in parallel, results synthesized, and sent back to THIS agent.
    */
-  private async processMention(mention: MentionMatch): Promise<string | null> {
+  private async processMentionRecursive(
+    mention: MentionMatch,
+    parentAgent: string,
+    depth: number,
+    visited: Set<string>,
+    buffer: ResponseBuffer,
+    globalMentionCount: { value: number }
+  ): Promise<string | null> {
     this.fire({
       type: 'thread_start',
-      from: this.config.master,
+      from: parentAgent,
       to: mention.agent,
       message: mention.message,
+      depth,
     })
 
     const conn = await this.ensureConnection(mention.agent)
     if (!conn) {
-      this.fire({
-        type: 'error',
-        agent: mention.agent,
-        error: `Failed to connect to ${mention.agent}`,
-      })
-      this.fire({ type: 'thread_end', from: this.config.master, to: mention.agent })
+      buffer.fail(mention.agent, `Failed to connect to ${mention.agent}`)
+      this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'error' })
+      this.fire({ type: 'thread_end', from: parentAgent, to: mention.agent, depth })
       return null
     }
 
-    // Wire up delta streaming inside the thread
+    // Buffer deltas instead of emitting them live
     const deltaHandler = (delta: string) => {
-      this.fire({ type: 'delta', agent: mention.agent, content: delta })
+      buffer.appendDelta(mention.agent, delta)
+      this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'streaming' })
     }
+    const toolStartHandler = (info: { name: string; id: string }) => {
+      buffer.addToolUse(mention.agent, info.name)
+      this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'tool_use', toolName: info.name })
+    }
+    const toolEndHandler = (_info: { name: string; id: string }) => {
+      buffer.clearToolUse(mention.agent)
+      this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'streaming' })
+    }
+
     conn.on('delta', deltaHandler)
+    conn.on('tool_start', toolStartHandler)
+    conn.on('tool_end', toolEndHandler)
 
-    this.fire({ type: 'thinking', agent: mention.agent })
+    this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'thinking' })
 
-    const result = await conn.sendMessage(mention.message)
+    let result = await conn.sendMessage(mention.message)
     conn.removeListener('delta', deltaHandler)
+    conn.removeListener('tool_start', toolStartHandler)
+    conn.removeListener('tool_end', toolEndHandler)
 
-    if (result !== null) {
-      this.fire({ type: 'done', agent: mention.agent, content: result })
-    } else {
-      this.fire({ type: 'error', agent: mention.agent, error: 'No response' })
+    if (result === null) {
+      buffer.fail(mention.agent, 'No response')
+      this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'error' })
+      this.fire({ type: 'thread_end', from: parentAgent, to: mention.agent, depth })
+      return null
     }
 
-    this.fire({ type: 'thread_end', from: this.config.master, to: mention.agent })
+    // --- Recursive: check for child @mentions ---
+    const branchVisited = new Set(visited)
+    branchVisited.add(mention.agent)
+
+    const childMentions = this.extractMentions(result, mention.agent)
+      .filter((m) => !branchVisited.has(m.agent))
+
+    if (
+      childMentions.length > 0 &&
+      depth < this.config.maxMentionDepth &&
+      globalMentionCount.value + childMentions.length <= MAX_TOTAL_MENTIONS
+    ) {
+      globalMentionCount.value += childMentions.length
+
+      // Process child mentions in parallel
+      const childBuffer = new ResponseBuffer()
+      for (const cm of childMentions) childBuffer.create(cm.agent)
+
+      const childResults = await Promise.all(
+        childMentions.map((cm) =>
+          this.processMentionRecursive(
+            cm,
+            mention.agent,
+            depth + 1,
+            branchVisited,
+            childBuffer,
+            globalMentionCount
+          )
+        )
+      )
+
+      // Build synthesis message for THIS agent (not master)
+      const childReplies: string[] = []
+      for (let i = 0; i < childMentions.length; i++) {
+        const cr = childResults[i]
+        if (cr) {
+          childReplies.push(`@${childMentions[i].agent} replied: ${cr}`)
+        }
+      }
+
+      if (childReplies.length > 0) {
+        // Send follow-up to THIS agent for synthesis
+        const followUp = `[Thread] ${childReplies.join('\n\n[Thread] ')}`
+
+        // Re-buffer for synthesis response
+        buffer.create(mention.agent) // reset buffer
+        conn.on('delta', deltaHandler)
+        conn.on('tool_start', toolStartHandler)
+        conn.on('tool_end', toolEndHandler)
+
+        this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'thinking' })
+
+        const synthesized = await conn.sendMessage(followUp)
+        conn.removeListener('delta', deltaHandler)
+        conn.removeListener('tool_start', toolStartHandler)
+        conn.removeListener('tool_end', toolEndHandler)
+
+        if (synthesized) {
+          result = synthesized
+        }
+      }
+    }
+
+    buffer.complete(mention.agent, result)
+    this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'done' })
+    this.fire({ type: 'thread_end', from: parentAgent, to: mention.agent, depth })
     return result
   }
 
-  /** Ensure an agent connection exists; connect lazily if not. */
+  /** Ensure an agent connection exists; connect lazily if not. Deduplicates concurrent connect attempts. */
   private async ensureConnection(name: string): Promise<OpenClawConnection | null> {
     const existing = this.connections.get(name)
     if (existing?.isConnected) return existing
 
+    // Dedup: if another call is already connecting this agent, wait for it
+    const pending = this.connectingPromises.get(name)
+    if (pending) return pending
+
     const agentConfig = this.config.agents[name]
     if (!agentConfig) return null
 
-    const sessionKey = `${this.config.sessionPrefix}-${name}-${Date.now()}`
-    const conn = new OpenClawConnection(name, agentConfig, sessionKey)
+    const connectPromise = (async (): Promise<OpenClawConnection | null> => {
+      const sessionKey = `${this.config.sessionPrefix}-${name}-${Date.now()}`
+      const conn = new OpenClawConnection(name, agentConfig, sessionKey)
 
-    this.fire({ type: 'connecting', agent: name })
+      this.fire({ type: 'connecting', agent: name })
 
-    try {
-      await conn.connect()
-      this.connections.set(name, conn)
-      this.fire({ type: 'connected', agent: name })
-      return conn
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      this.fire({ type: 'connect_error', agent: name, error: message })
-      return null
-    }
+      try {
+        await conn.connect()
+        this.connections.set(name, conn)
+        this.fire({ type: 'connected', agent: name })
+        return conn
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        this.fire({ type: 'connect_error', agent: name, error: message })
+        return null
+      } finally {
+        this.connectingPromises.delete(name)
+      }
+    })()
+
+    this.connectingPromises.set(name, connectPromise)
+    return connectPromise
   }
 
-  /** Extract @mentions and the text directed at each agent. */
-  private extractMentions(text: string): MentionMatch[] {
+  /**
+   * Extract @mentions from text, excluding self-mentions.
+   * Each agent is only extracted once (first occurrence wins).
+   */
+  private extractMentions(text: string, excludeAgent: string): MentionMatch[] {
     const mentions: MentionMatch[] = []
     const matches = [...text.matchAll(this.mentionRegex)]
+    const seen = new Set<string>()
 
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i]
       const agent = match[1]
+      if (agent === excludeAgent || seen.has(agent)) continue
+      seen.add(agent)
+
       const start = match.index! + match[0].length
       const end = i + 1 < matches.length ? matches[i + 1].index! : text.length
       const message = text.slice(start, end).trim()
@@ -213,6 +363,28 @@ export class Orchestrator extends EventEmitter {
     }
 
     return mentions
+  }
+
+  /** Get conversation histories for all connected agents. */
+  getHistories(): Record<string, Array<{ role: string; content: string }>> {
+    const result: Record<string, Array<{ role: string; content: string }>> = {}
+    for (const [name, conn] of this.connections) {
+      result[name] = conn.getHistory()
+    }
+    return result
+  }
+
+  /** Restore conversation histories from a saved session. */
+  async restoreHistories(
+    histories: Record<string, Array<{ role: string; content: string }>>
+  ): Promise<void> {
+    for (const [name, history] of Object.entries(histories)) {
+      if (!this.config.agents[name]) continue
+      const conn = await this.ensureConnection(name)
+      if (conn) {
+        conn.setHistory(history)
+      }
+    }
   }
 
   /** Close all connections. */

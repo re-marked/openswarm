@@ -1,19 +1,22 @@
 {
   "agents": {
     "master": {
-      "url": "ws://localhost:18789",
+      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "label": "Master",
-      "color": "indigo"
+      "color": "indigo",
+      "model": "gemini-2.5-flash"
     },
     "researcher": {
-      "url": "ws://localhost:18790",
+      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "label": "Researcher",
-      "color": "green"
+      "color": "green",
+      "model": "gemini-2.5-flash"
     },
     "coder": {
-      "url": "ws://localhost:18791",
+      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "label": "Coder",
-      "color": "amber"
+      "color": "amber",
+      "model": "gemini-2.5-flash"
     }
   },
   "master": "master",

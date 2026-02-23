@@ -1,6 +1,7 @@
 node_modules/
 dist/
 swarm.config.json
+.env
 *.log
 
 # OpenClaw generated workspace files (kept only SOUL.md)
