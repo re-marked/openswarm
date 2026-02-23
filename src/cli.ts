@@ -3,12 +3,14 @@
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import chalk from 'chalk'
+import ora from 'ora'
 import { loadEnvFile } from './env.js'
 import { writeExport } from './export.js'
 import { loadConfig } from './config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Renderer } from './renderer.js'
 import { SessionManager } from './session.js'
+import { SpawnManager } from './spawn.js'
 import type { OrchestratorEvent } from './types.js'
 
 /** Format a relative timestamp like "2m ago", "3h ago", "yesterday". */
@@ -25,6 +27,11 @@ function relativeTime(ts: number): string {
   return `${days}d ago`
 }
 
+/** Check if any agents in the config use workspace mode. */
+function hasWorkspaceAgents(agents: Record<string, { workspace?: string }>): boolean {
+  return Object.values(agents).some((a) => !!a.workspace)
+}
+
 /**
  * Graceful shutdown that avoids the Windows UV_HANDLE_CLOSING assertion.
  *
@@ -32,12 +39,13 @@ function relativeTime(ts: number): string {
  * the assertion. Instead: close readline, destroy stdin (removes the handle
  * keeping the event loop alive), set exitCode, and let Node exit naturally.
  */
-function shutdown(
+async function shutdown(
   code: number,
   orchestrator?: Orchestrator,
   rl?: ReadlineInterface,
-  session?: SessionManager
-): void {
+  session?: SessionManager,
+  spawnManager?: SpawnManager,
+): Promise<void> {
   if (session && orchestrator) {
     try {
       session.setHistories(orchestrator.getHistories())
@@ -45,16 +53,66 @@ function shutdown(
     } catch { /* best-effort */ }
   }
   orchestrator?.close()
+
+  if (spawnManager) {
+    const spinner = ora({ text: 'Stopping agents...', color: 'yellow' }).start()
+    await spawnManager.stopAll()
+    spinner.stop()
+  }
+
   rl?.close()
   process.stdin.destroy() // removes the stdin handle so the event loop can drain
   process.exitCode = code // set exit code without calling process.exit()
 }
 
 async function main() {
+  const subcommand = process.argv[2]
+
   // --- Handle `init` subcommand before anything else ---
-  if (process.argv[2] === 'init') {
+  if (subcommand === 'init') {
     const { runInitWizard } = await import('./init.js')
     await runInitWizard()
+    return
+  }
+
+  // --- Handle `up` subcommand — spawn agents and exit ---
+  if (subcommand === 'up') {
+    loadEnvFile()
+    const configPath = process.argv[3] ?? 'swarm.config.json'
+    const config = await loadConfig(configPath)
+
+    if (!hasWorkspaceAgents(config.agents)) {
+      console.log(chalk.dim('  No workspace agents to start.'))
+      return
+    }
+
+    const manager = new SpawnManager()
+    console.log()
+    const results = await manager.startAll(config.agents, (name, status) => {
+      const agent = config.agents[name]
+      if (!agent) return
+      if (status === 'starting') console.log(chalk.dim(`  Starting ${agent.label}...`))
+      else if (status === 'ready') console.log(chalk.green(`  ${agent.label} ready (port ${agent.port})`))
+      else console.log(chalk.red(`  ${agent.label} failed to start`))
+    })
+
+    const allReady = [...results.values()].every(Boolean)
+    if (allReady) {
+      console.log(chalk.green('\n  All agents running. Use `openswarm down` to stop.\n'))
+    } else {
+      console.log(chalk.yellow('\n  Some agents failed to start.\n'))
+    }
+    return
+  }
+
+  // --- Handle `down` subcommand — kill agents from pids.json ---
+  if (subcommand === 'down') {
+    const stopped = SpawnManager.stopFromPids()
+    if (stopped) {
+      console.log(chalk.green('  Agents stopped.'))
+    } else {
+      console.log(chalk.dim('  No running agents found.'))
+    }
     return
   }
 
@@ -63,6 +121,7 @@ async function main() {
 
   // --- Parse args ---
   const { values } = parseArgs({
+    args: process.argv.slice(2),
     options: {
       config: { type: 'string', short: 'c', default: 'swarm.config.json' },
       session: { type: 'string', short: 's' },
@@ -83,7 +142,7 @@ async function main() {
     process.exit(1)
   }
 
-  // --- Inject API key from env if agents don't have tokens ---
+  // --- Inject API key from env for url-mode agents ---
   const envKey =
     process.env.GOOGLE_API_KEY ??
     process.env.OPENAI_API_KEY ??
@@ -96,10 +155,45 @@ async function main() {
     process.env.OPENCLAW_GATEWAY_TOKEN
   if (envKey) {
     for (const agent of Object.values(config.agents)) {
-      if (!agent.token) {
+      if (!agent.token && !agent.workspace) {
         agent.token = envKey
       }
     }
+  }
+
+  // --- Spawn workspace agents ---
+  let spawnManager: SpawnManager | undefined
+
+  if (hasWorkspaceAgents(config.agents)) {
+    spawnManager = new SpawnManager()
+    console.log()
+
+    const statusMap = new Map<string, string>()
+
+    const results = await spawnManager.startAll(config.agents, (name, status) => {
+      const agent = config.agents[name]
+      if (!agent) return
+      if (status === 'starting') {
+        statusMap.set(name, 'starting...')
+        console.log(chalk.dim(`  Starting ${agent.label}...`))
+      } else if (status === 'ready') {
+        statusMap.set(name, 'ready')
+        console.log(chalk.green(`  ${agent.label} ready (port ${agent.port})`))
+      } else {
+        statusMap.set(name, 'failed')
+        console.log(chalk.red(`  ${agent.label} failed to start`))
+      }
+    })
+
+    // Check if any failed
+    const failed = [...results.entries()].filter(([, ready]) => !ready)
+    if (failed.length > 0) {
+      console.error(chalk.red(`\n  ${failed.length} agent(s) failed to start. Check OpenClaw config.\n`))
+      await spawnManager.stopAll()
+      process.exit(1)
+    }
+
+    console.log()
   }
 
   // --- Setup ---
@@ -115,7 +209,8 @@ async function main() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       console.error(chalk.red(`Failed to restore session: ${msg}`))
-      process.exit(1)
+      await shutdown(1, orchestrator, undefined, undefined, spawnManager)
+      return
     }
   } else {
     session = new SessionManager(config.master, Object.keys(config.agents))
@@ -140,7 +235,7 @@ async function main() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error'
     console.error(chalk.red(`Failed to connect to master: ${msg}`))
-    shutdown(1, orchestrator)
+    await shutdown(1, orchestrator, undefined, undefined, spawnManager)
     return
   }
 
@@ -175,7 +270,7 @@ async function main() {
     // Slash commands
     if (input === '/quit' || input === '/exit') {
       console.log(chalk.dim('\n  Goodbye!'))
-      shutdown(0, orchestrator, rl, session)
+      await shutdown(0, orchestrator, rl, session, spawnManager)
       return
     }
 
@@ -258,13 +353,13 @@ async function main() {
   })
 
   rl.on('close', () => {
-    shutdown(0, orchestrator, undefined, session)
+    shutdown(0, orchestrator, undefined, session, spawnManager)
   })
 
   // Graceful shutdown
   process.on('SIGINT', () => {
     console.log(chalk.dim('\n\n  Shutting down...'))
-    shutdown(0, orchestrator, rl, session)
+    shutdown(0, orchestrator, rl, session, spawnManager)
   })
 }
 
