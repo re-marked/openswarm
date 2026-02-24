@@ -4,7 +4,7 @@ import { getGlobalToken, discoverOpenClaw } from './discover.js'
 import type { AgentConfig, GatewayConfig, SwarmConfig } from './types.js'
 
 const DEFAULTS: Pick<SwarmConfig, 'maxMentionDepth' | 'sessionPrefix' | 'timeout'> = {
-  maxMentionDepth: 3,
+  maxMentionDepth: 5,
   sessionPrefix: 'openswarm',
   timeout: 120_000,
 }
@@ -159,24 +159,37 @@ export function buildAgentSystemPrompt(name: string, config: SwarmConfig): strin
     `Your swarm team:`,
     ...teamLines,
     ``,
-    `This is a group chat. You see all messages from the user and other agents.`,
-    `You can @mention teammates to involve them: ${mentionableTeammates}`,
+    `This is a GROUP CHAT — like Discord or Slack. All messages are visible to everyone.`,
+    `You can @mention teammates to bring them into the conversation: ${mentionableTeammates}`,
+    ``,
+    `CONVERSATION STYLE:`,
+    `- This is a live discussion, not a one-shot Q&A. Engage naturally.`,
+    `- When another agent says something interesting, controversial, or worth discussing,`,
+    `  @mention them to respond, challenge, agree, or build on their point.`,
+    `- Keep responses focused but substantive. Don't just summarize — add your own perspective.`,
+    `- If you disagree with another agent, say so directly and explain why.`,
+    `- Tag specific agents when replying to them (e.g. "@philosopher I disagree because...").`,
+    `- You can tag multiple agents to get their take on something.`,
   ]
 
   if (isMaster) {
     lines.push(
       ``,
-      `As coordinator, your job is to understand the user's request and delegate tasks`,
-      `to your team using @mentions. You see all responses in the group chat.`,
-      `You can @mention ANY name to create a new specialist agent on-the-fly.`,
-      `For example, @philosopher will spawn a new "Philosopher" agent if one doesn't exist.`,
-      `You can @mention multiple agents in one response for parallel tasks.`,
+      `As coordinator, your job is to:`,
+      `1. Understand the user's request and kick off the conversation with @mentions.`,
+      `2. Keep the discussion on track — redirect if it drifts.`,
+      `3. When the user asks for a debate/discussion, set it up and let agents go back and forth.`,
+      `4. You can @mention ANY name to create a new specialist agent on-the-fly.`,
+      `5. You can @mention multiple agents in one response for parallel tasks.`,
+      `6. Don't over-summarize — let the conversation flow naturally.`,
     )
   } else {
     lines.push(
       ``,
-      `Focus on your area of expertise. Answer thoroughly and directly.`,
-      `Only @mention others when you genuinely need their specific expertise.`,
+      `Focus on your area of expertise. Be opinionated and engage deeply.`,
+      `When someone challenges your view, push back with substance.`,
+      `@mention other agents to directly address their points or ask them to weigh in.`,
+      `Don't just answer once and go silent — stay in the conversation.`,
     )
   }
 

@@ -29,20 +29,18 @@ export function Message({ message, agents }: MessageProps) {
 
   if (isSystem) {
     return (
-      <Box paddingX={1}>
-        <Text color="gray" dimColor>{'  '}◆ {message.content}</Text>
+      <Box paddingX={1} marginTop={0}>
+        <Text color="gray" dimColor>  ◆ {message.content}</Text>
       </Box>
     )
   }
 
   if (isUser) {
     return (
-      <Box flexDirection="column" paddingX={1}>
-        <Box>
-          <Text color="white" bold>● You</Text>
-        </Box>
+      <Box flexDirection="column" paddingX={1} marginTop={1}>
+        <Text color="white" bold>● You</Text>
         <Box paddingLeft={2}>
-          <Text>{message.content}</Text>
+          <Text wrap="wrap">{message.content}</Text>
         </Box>
       </Box>
     )
@@ -53,25 +51,24 @@ export function Message({ message, agents }: MessageProps) {
   const colorHex = agent ? getHex(agent.color) : '#ffffff'
   const label = agent?.label ?? message.from
 
-  const statusIndicator = message.status === 'streaming'
-    ? ' ▍'
-    : message.status === 'error'
-      ? ' ✗'
-      : ''
+  const isStreaming = message.status === 'streaming'
+  const isError = message.status === 'error'
+
+  // Show content — for streaming, show what we have so far
+  let displayContent = message.content
+  if (isStreaming && !displayContent) {
+    displayContent = 'thinking...'
+  }
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} marginTop={1}>
       <Box>
         <Text color={colorHex} bold>● {label}</Text>
-        {message.status === 'streaming' && (
-          <Text color="gray" dimColor>{statusIndicator}</Text>
-        )}
-        {message.status === 'error' && (
-          <Text color="red">{statusIndicator}</Text>
-        )}
+        {isStreaming && <Text color="gray"> ▍</Text>}
+        {isError && <Text color="red"> ✗</Text>}
       </Box>
       <Box paddingLeft={2}>
-        <Text wrap="wrap">{message.content || (message.status === 'streaming' ? '...' : '')}</Text>
+        <Text wrap="wrap">{displayContent}</Text>
       </Box>
     </Box>
   )
