@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { createInterface } from 'node:readline/promises'
-import { Readable } from 'node:stream'
 import { parseArgs } from 'node:util'
 import chalk from 'chalk'
 import { loadEnvFile } from './env.js'
@@ -173,20 +172,14 @@ async function main() {
     }
   }
 
-  // --- REPL (explicit async loop — more reliable than event-emitter readline in MSYS) ---
-  //
-  // In MSYS/Git Bash, Node.js sees stdin as a Windows pipe (process.stdin.isTTY is
-  // false). The pipe sends EOF after each typed line even though the terminal stays
-  // connected, which causes readline to close after the first response.
-  //
-  // Fix: wrap stdin in a pass-through Readable that forwards data but never forwards
-  // 'end'. Readline stays alive across EOF signals; the terminal keeps delivering
-  // new data when the user types again.
-  const inputStream = new Readable({ read() {} })
-  process.stdin.on('data', (chunk) => inputStream.push(chunk))
-  process.stdin.on('end', () => { /* swallow — keep inputStream open */ })
-
-  const rl = createInterface({ input: inputStream, output: process.stdout })
+  // --- REPL ---
+  // Force terminal:true so readline doesn't auto-close on EOF in MSYS/non-TTY envs
+  process.stdin.resume()
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  })
 
   let exiting = false
 
