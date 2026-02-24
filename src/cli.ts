@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
-import { createInterface } from 'node:readline/promises'
-import { Readable } from 'node:stream'
+import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import chalk from 'chalk'
 import { loadEnvFile } from './env.js'
@@ -174,32 +173,31 @@ async function main() {
   }
 
   // --- REPL ---
-  process.stdin.resume()
-  process.stdin.setEncoding('utf-8')
-  // Wrap stdin so EOF never reaches readline (MSYS sends EOF after each line)
-  const inputStream = new Readable({ encoding: 'utf-8', read() {} })
-  process.stdin.on('data', (chunk: unknown) => inputStream.push(chunk))
-  const rl = createInterface({ input: inputStream, output: process.stdout, terminal: true })
+  // On Windows (MSYS/Git Bash), stdin is a pipe not a TTY. Node's readline
+  // auto-closes when stdin sends EOF after each line. The fix: create a fresh
+  // readline interface for each question so ERR_USE_AFTER_CLOSE never happens.
+  function askQuestion(prompt: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
+      rl.on('close', () => resolve(null))
+      rl.question(prompt, (answer) => {
+        rl.close()
+        resolve(answer)
+      })
+    })
+  }
 
   let exiting = false
 
   process.on('SIGINT', () => {
     console.log(chalk.dim('\n\n  Shutting down...'))
     exiting = true
-    rl.close()
   })
 
   while (!exiting) {
-    let input: string
-    try {
-      input = (await rl.question(chalk.dim('you > '))).trim()
-    } catch (err) {
-      if (exiting) break
-      // Log error so we can diagnose; continue loop instead of dying
-      const msg = err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err)
-      process.stderr.write(`[rl error] ${msg}\n`)
-      continue
-    }
+    const raw = await askQuestion(chalk.dim('you > '))
+    if (raw === null || exiting) break
+    const input = raw.trim()
 
     if (!input) continue
 
@@ -270,7 +268,6 @@ async function main() {
     console.log()
   }
 
-  rl.close()
   flushAndClose(0, orchestrator, session)
   process.stdin.destroy()
 }
