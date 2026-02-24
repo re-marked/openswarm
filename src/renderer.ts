@@ -251,6 +251,16 @@ export class Renderer {
         break
       }
 
+      case 'agent_spawned': {
+        this.stopSpinner()
+        // Register the new agent so subsequent events render correctly
+        this.agents[event.agent] = { label: event.label, color: event.color } as AgentConfig
+        const spawnColor = getColor(event.color)
+        console.log()
+        console.log(`  ${spawnColor('◆')} ${chalk.bold('Spawned')} ${spawnColor.bold(event.label)} ${chalk.dim(`(@${event.agent})`)}`)
+        break
+      }
+
       case 'error':
         this.stopSpinner()
         console.log(chalk.red(`  Error (${event.agent}): ${event.error}`))
