@@ -178,12 +178,20 @@ async function main() {
   // readline interface for each question so ERR_USE_AFTER_CLOSE never happens.
   function askQuestion(prompt: string): Promise<string | null> {
     return new Promise((resolve) => {
+      let done = false
       const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
-      rl.on('close', () => resolve(null))
       rl.question(prompt, (answer) => {
+        if (done) return
+        done = true
         rl.close()
         resolve(answer)
       })
+      // Handle close AFTER giving the question callback a chance (setImmediate)
+      rl.on('close', () => setImmediate(() => {
+        if (done) return
+        done = true
+        resolve(null)
+      }))
     })
   }
 
