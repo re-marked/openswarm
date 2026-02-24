@@ -39,15 +39,26 @@ export function Message({ message, agents, isFirst }: MessageProps) {
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
 
+  // Divider between messages
+  const divider = !isFirst ? (
+    <Box paddingX={1} marginTop={1}>
+      <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+    </Box>
+  ) : null
+
   if (isUser) {
     return (
-      <Box flexDirection="column" paddingX={1}>
-        {!isFirst && <Text color="gray" dimColor>{'─'.repeat(70)}</Text>}
-        <Text color="white" bold>{'▶ '}You</Text>
-        <Box paddingLeft={2}>
-          <Text wrap="wrap">{message.content}</Text>
+      <>
+        {divider}
+        <Box flexDirection="column" paddingX={1} marginBottom={1}>
+          <Box>
+            <Text wrap="truncate-end" color="white" bold>▶ You</Text>
+          </Box>
+          <Box paddingLeft={2} marginTop={0}>
+            <Text wrap="wrap">{message.content}</Text>
+          </Box>
         </Box>
-      </Box>
+      </>
     )
   }
 
@@ -62,20 +73,22 @@ export function Message({ message, agents, isFirst }: MessageProps) {
   }
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      {!isFirst && <Text color="gray" dimColor>{'─'.repeat(70)}</Text>}
-      <Box>
-        <Text color={colorHex} bold>{'● '}{label}</Text>
-        {isStreaming && <Text color="yellow"> ▍</Text>}
-        {isError && <Text color="red"> ✗</Text>}
+    <>
+      {divider}
+      <Box flexDirection="column" paddingX={1} marginBottom={1}>
+        <Box>
+          <Text wrap="truncate-end" color={colorHex} bold>● {label}</Text>
+          {isStreaming && <Text color="yellow"> ▍</Text>}
+          {isError && <Text color="red"> ✗</Text>}
+        </Box>
+        <Box paddingLeft={2} marginTop={0}>
+          {isStreaming ? (
+            <Text wrap="wrap">{displayContent}</Text>
+          ) : (
+            <FormattedText>{displayContent}</FormattedText>
+          )}
+        </Box>
       </Box>
-      <Box paddingLeft={2}>
-        {isStreaming ? (
-          <Text wrap="wrap">{displayContent}</Text>
-        ) : (
-          <FormattedText>{displayContent}</FormattedText>
-        )}
-      </Box>
-    </Box>
+    </>
   )
 }
