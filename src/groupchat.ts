@@ -278,12 +278,9 @@ export class GroupChat extends EventEmitter {
       const sessionKey = `${this.config.sessionPrefix}-${name}-${Date.now()}`
       const conn = new OpenClawConnection(name, agentConfig, this.config.gateway, sessionKey)
 
-      this.fire({ type: 'system', text: `Connecting to ${agentConfig.label}...` })
-
       try {
         await conn.connect()
         this.connections.set(name, conn)
-        this.fire({ type: 'system', text: `Connected to ${agentConfig.label}` })
         return conn
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
