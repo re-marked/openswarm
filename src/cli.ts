@@ -193,9 +193,12 @@ async function main() {
     let input: string
     try {
       input = (await rl.question(chalk.dim('you > '))).trim()
-    } catch {
-      // readline closed (Ctrl+D / SIGINT)
-      break
+    } catch (err) {
+      if (exiting) break
+      // Log error so we can diagnose; continue loop instead of dying
+      const msg = err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err)
+      process.stderr.write(`[rl error] ${msg}\n`)
+      continue
     }
 
     if (!input) continue
