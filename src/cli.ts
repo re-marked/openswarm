@@ -96,6 +96,9 @@ async function main() {
     process.exit(1)
   }
 
+  // Clear terminal before launching TUI
+  process.stdout.write('\x1b[2J\x1b[H')
+
   // --- Launch ink TUI ---
   const { render } = await import('ink')
   const React = await import('react')
