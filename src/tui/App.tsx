@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Box, useApp } from 'ink'
+import { Box, Text, Static, useApp } from 'ink'
 import { StatusBar } from './StatusBar.js'
-import { MessageList } from './MessageList.js'
+import { Message } from './Message.js'
 import { AgentSidebar } from './AgentSidebar.js'
 import { InputBox } from './InputBox.js'
 import type { GroupChat } from '../groupchat.js'
@@ -21,21 +21,23 @@ export function App({ groupChat, sessionId }: AppProps) {
   const { exit } = useApp()
   const config = groupChat.getConfig()
 
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  // Completed messages — rendered via <Static>, scroll up naturally
+  const [completedMessages, setCompletedMessages] = useState<ChatMessage[]>([])
+  // Streaming messages — re-rendered in the dynamic area
+  const [streamingMessages, setStreamingMessages] = useState<ChatMessage[]>([])
+
   const [agents, setAgents] = useState<Record<string, AgentConfig>>({ ...config.agents })
   const [activities, setActivities] = useState<Record<string, AgentActivity>>({})
 
-  // Accumulate deltas in a ref (no re-render per token), flush on a timer
+  // Accumulate deltas in a ref, flush on timer
   const deltaBuffers = useRef<Map<string, string>>(new Map())
-  const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Flush buffered deltas into React state every 150ms
   useEffect(() => {
-    flushTimerRef.current = setInterval(() => {
+    const timer = setInterval(() => {
       const buffers = deltaBuffers.current
       if (buffers.size === 0) return
 
-      setMessages((prev) => {
+      setStreamingMessages((prev) => {
         let updated = prev
         for (const [msgId, newContent] of buffers) {
           updated = updated.map((m) =>
@@ -45,50 +47,64 @@ export function App({ groupChat, sessionId }: AppProps) {
         return updated
       })
       buffers.clear()
-    }, 150)
+    }, 200)
 
-    return () => {
-      if (flushTimerRef.current) clearInterval(flushTimerRef.current)
-    }
+    return () => clearInterval(timer)
   }, [])
 
   useEffect(() => {
     const handler = (event: GroupChatEvent) => {
       switch (event.type) {
-        case 'message_start':
-          setMessages((prev) => [...prev, { ...event.message, content: '' }])
+        case 'message_start': {
+          const msg = { ...event.message, content: '' }
+          if (msg.from === 'user' || msg.from === 'system') {
+            // User and system messages go straight to completed
+            setCompletedMessages((prev) => [...prev, { ...event.message }])
+          } else {
+            // Agent messages start in streaming
+            setStreamingMessages((prev) => [...prev, msg])
+          }
           break
+        }
 
         case 'message_delta': {
-          // Buffer deltas — don't trigger a React render per token
           const buf = deltaBuffers.current
           const existing = buf.get(event.messageId) ?? ''
           buf.set(event.messageId, existing + event.content)
           break
         }
 
-        case 'message_done':
-          // Clear any pending delta buffer for this message
+        case 'message_done': {
           deltaBuffers.current.delete(event.messageId)
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === event.messageId
-                ? { ...m, content: stripSwarmContext(event.content), status: 'complete' as const }
-                : m
-            )
-          )
+          const doneMsg: ChatMessage = {
+            id: event.messageId,
+            timestamp: Date.now(),
+            from: '',
+            content: stripSwarmContext(event.content),
+            status: 'complete',
+          }
+          // Move from streaming → completed
+          setStreamingMessages((prev) => {
+            const msg = prev.find((m) => m.id === event.messageId)
+            if (msg) {
+              setCompletedMessages((cp) => [...cp, { ...msg, content: stripSwarmContext(event.content), status: 'complete' }])
+            }
+            return prev.filter((m) => m.id !== event.messageId)
+          })
           break
+        }
 
-        case 'message_error':
+        case 'message_error': {
           deltaBuffers.current.delete(event.messageId)
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === event.messageId
-                ? { ...m, status: 'error' as const, content: m.content || event.error }
-                : m
-            )
-          )
+          setStreamingMessages((prev) => {
+            const msg = prev.find((m) => m.id === event.messageId)
+            if (msg) {
+              setCompletedMessages((cp) => [...cp, { ...msg, status: 'error', content: msg.content || event.error }])
+            }
+            return prev.filter((m) => m.id !== event.messageId)
+          })
           break
+        }
 
         case 'agent_status':
           setActivities((prev) => ({ ...prev, [event.agent]: event.activity }))
@@ -108,21 +124,13 @@ export function App({ groupChat, sessionId }: AppProps) {
             content: `Spawned ${event.label} (@${event.agent})`,
             status: 'complete',
           }
-          setMessages((prev) => [...prev, sysMsg])
+          setCompletedMessages((prev) => [...prev, sysMsg])
           break
         }
 
-        case 'system': {
-          const sysMsg: ChatMessage = {
-            id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            timestamp: Date.now(),
-            from: 'system',
-            content: event.text,
-            status: 'complete',
-          }
-          setMessages((prev) => [...prev, sysMsg])
+        case 'system':
+          // Suppress connection noise
           break
-        }
       }
     }
 
@@ -132,7 +140,8 @@ export function App({ groupChat, sessionId }: AppProps) {
 
   const handleSubmit = useCallback((text: string) => {
     if (text === '/clear') {
-      setMessages([])
+      setCompletedMessages([])
+      setStreamingMessages([])
       return
     }
     if (text === '/status') {
@@ -149,7 +158,7 @@ export function App({ groupChat, sessionId }: AppProps) {
         content: lines.join('\n'),
         status: 'complete',
       }
-      setMessages((prev) => [...prev, sysMsg])
+      setCompletedMessages((prev) => [...prev, sysMsg])
       return
     }
 
@@ -161,7 +170,7 @@ export function App({ groupChat, sessionId }: AppProps) {
         content: `Error: ${err instanceof Error ? err.message : String(err)}`,
         status: 'error',
       }
-      setMessages((prev) => [...prev, errorMsg])
+      setCompletedMessages((prev) => [...prev, errorMsg])
     })
   }, [groupChat, agents])
 
@@ -170,20 +179,47 @@ export function App({ groupChat, sessionId }: AppProps) {
     exit()
   }, [groupChat, exit])
 
+  // Filter system noise from completed messages
+  const visibleCompleted = completedMessages.filter((m) => {
+    if (m.from !== 'system') return true
+    if (m.content.startsWith('Spawned ')) return true
+    if (m.content.startsWith('Error')) return true
+    return false
+  })
+
   return (
-    <Box flexDirection="column" height={process.stdout.rows || 24}>
+    <Box flexDirection="column">
+      {/* Status bar — always at top */}
       <StatusBar
         gatewayPort={config.gateway.port}
         agentCount={Object.keys(agents).length}
         sessionId={sessionId}
       />
 
-      <Box flexGrow={1} flexDirection="row">
-        <MessageList messages={messages} agents={agents} />
+      {/* Completed messages — rendered once, scroll up naturally */}
+      <Static items={visibleCompleted}>
+        {(msg, index) => (
+          <Message key={msg.id} message={msg} agents={agents} isFirst={index === 0} />
+        )}
+      </Static>
+
+      {/* Streaming messages — re-rendered as content arrives */}
+      {streamingMessages.map((msg, index) => (
+        <Message
+          key={msg.id}
+          message={msg}
+          agents={agents}
+          isFirst={visibleCompleted.length === 0 && index === 0}
+        />
+      ))}
+
+      {/* Agent sidebar + input — stays at bottom */}
+      <Box marginTop={1}>
+        <Box flexGrow={1} flexDirection="column">
+          <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
+        </Box>
         <AgentSidebar agents={agents} activities={activities} master={config.master} />
       </Box>
-
-      <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
     </Box>
   )
 }
