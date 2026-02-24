@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createInterface } from 'node:readline/promises'
+import { Readable } from 'node:stream'
 import { parseArgs } from 'node:util'
 import chalk from 'chalk'
 import { loadEnvFile } from './env.js'
@@ -173,13 +174,12 @@ async function main() {
   }
 
   // --- REPL ---
-  // Force terminal:true so readline doesn't auto-close on EOF in MSYS/non-TTY envs
   process.stdin.resume()
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-  })
+  process.stdin.setEncoding('utf-8')
+  // Wrap stdin so EOF never reaches readline (MSYS sends EOF after each line)
+  const inputStream = new Readable({ encoding: 'utf-8', read() {} })
+  process.stdin.on('data', (chunk: unknown) => inputStream.push(chunk))
+  const rl = createInterface({ input: inputStream, output: process.stdout, terminal: true })
 
   let exiting = false
 
