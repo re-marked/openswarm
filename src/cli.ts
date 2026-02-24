@@ -173,26 +173,25 @@ async function main() {
   }
 
   // --- REPL ---
-  // On Windows (MSYS/Git Bash), stdin is a pipe not a TTY. Node's readline
-  // auto-closes when stdin sends EOF after each line. The fix: create a fresh
-  // readline interface for each question so ERR_USE_AFTER_CLOSE never happens.
+  // In MSYS/Git Bash, stdin is a pipe (isTTY=false). Creating/closing readline
+  // per question corrupts stdin state. The fix (per nodejs/node#21771, #5620):
+  // create ONE interface, use the 'line' event + a promise queue, never close
+  // mid-session. terminal:false avoids setRawMode which breaks MSYS pipes.
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
+  const lineQueue: Array<(line: string | null) => void> = []
+
+  rl.on('line', (line) => {
+    const resolve = lineQueue.shift()
+    if (resolve) resolve(line)
+  })
+
+  rl.on('close', () => {
+    for (const resolve of lineQueue.splice(0)) resolve(null)
+  })
+
   function askQuestion(prompt: string): Promise<string | null> {
-    return new Promise((resolve) => {
-      let done = false
-      const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
-      rl.question(prompt, (answer) => {
-        if (done) return
-        done = true
-        rl.close()
-        resolve(answer)
-      })
-      // Handle close AFTER giving the question callback a chance (setImmediate)
-      rl.on('close', () => setImmediate(() => {
-        if (done) return
-        done = true
-        resolve(null)
-      }))
-    })
+    process.stdout.write(prompt)
+    return new Promise((resolve) => { lineQueue.push(resolve) })
   }
 
   let exiting = false
@@ -200,6 +199,7 @@ async function main() {
   process.on('SIGINT', () => {
     console.log(chalk.dim('\n\n  Shutting down...'))
     exiting = true
+    rl.close()
   })
 
   while (!exiting) {
@@ -276,6 +276,7 @@ async function main() {
     console.log()
   }
 
+  rl.close()
   flushAndClose(0, orchestrator, session)
   process.stdin.destroy()
 }
