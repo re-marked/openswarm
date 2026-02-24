@@ -5,13 +5,7 @@ import type { SessionData } from './types.js'
 /**
  * Export a session to a Markdown file.
  *
- * Format:
- * - # OpenSwarm Conversation header with metadata
- * - ## You sections for user messages
- * - ## AgentLabel sections for agent responses (from `done` events)
- * - Thread starts as blockquotes: > Thread: Agent A → Agent B
- * - Tool uses as italic: > *[tool_name]*
- * - Skips delta/thinking/connecting events
+ * Format: flat chat log with ## headers per speaker.
  */
 export function exportToMarkdown(
   data: SessionData,
@@ -30,41 +24,22 @@ export function exportToMarkdown(
   lines.push('---')
   lines.push('')
 
-  for (const { event } of data.events) {
-    switch (event.type) {
-      case 'user_message':
-        lines.push(`## You`)
-        lines.push('')
-        lines.push(event.content)
-        lines.push('')
-        break
-
-      case 'done': {
-        const label = agentLabels[event.agent] ?? event.agent
-        lines.push(`## ${label}`)
-        lines.push('')
-        lines.push(event.content)
-        lines.push('')
-        break
-      }
-
-      case 'thread_start': {
-        const fromLabel = agentLabels[event.from] ?? event.from
-        const toLabel = agentLabels[event.to] ?? event.to
-        lines.push(`> Thread: ${fromLabel} → ${toLabel}`)
-        lines.push('')
-        break
-      }
-
-      case 'tool_start':
-        lines.push(`> *[${event.toolName}]*`)
-        lines.push('')
-        break
-
-      // Skip all other event types
-      default:
-        break
+  for (const message of data.messages) {
+    if (message.from === 'system') {
+      lines.push(`> *${message.content}*`)
+      lines.push('')
+      continue
     }
+
+    if (message.from === 'user') {
+      lines.push('## You')
+    } else {
+      const label = agentLabels[message.from] ?? message.from
+      lines.push(`## ${label}`)
+    }
+    lines.push('')
+    lines.push(message.content)
+    lines.push('')
   }
 
   return lines.join('\n')

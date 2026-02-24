@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Dev mode — run TypeScript directly (no build step needed)
 npx tsx src/cli.ts
 
-# Init wizard — discovers running OpenClaw gateways and writes swarm.config.json
+# Init wizard — discovers OpenClaw agents and writes swarm.config.json
 npx tsx src/cli.ts init
 
 # Build to dist/
@@ -22,68 +22,67 @@ No test framework is configured. There are no lint scripts.
 
 ## Architecture
 
-OpenSwarm is a CLI that connects multiple LLM agents into a group chat via `@mention` orchestration. It is a pure Node.js ESM project with only 2 runtime dependencies (`chalk`, `ora`).
+OpenSwarm is a CLI that connects multiple LLM agents into an async group chat via `@mention` routing. It renders a Discord-style TUI using `ink` (React for CLIs). Runtime deps: `chalk`, `ink`, `react`.
 
-**OpenSwarm does NOT manage OpenClaw processes.** Users run their own OpenClaw gateways; OpenSwarm discovers them and connects them into a swarm. The `up`/`down` subcommands are deprecated.
-
-### Agent Modes
-
-Agents in `swarm.config.json` can be configured via:
-
-1. **Port mode** (`port` field): Connects to `http://localhost:{port}/v1`. This is the primary mode — `openswarm init` discovers running OpenClaw gateways and auto-populates ports.
-2. **URL mode** (`url` field): Points to any OpenAI-compatible endpoint directly.
-
-Token is auto-read from `~/.openclaw/openclaw.json` at startup; can be overridden per-agent.
-
-### Agent Self-Consciousness
-
-Every agent gets a rich system prompt at connection time with its identity, endpoint, model, and full team roster. Every delegated inter-agent message is prepended with a `[SWARM CONTEXT]` block containing sender/receiver info, models, endpoints, team roster, and depth.
+**Single-gateway model:** All agents share one OpenClaw gateway on one port (e.g. 18789). Agent routing is via the `x-openclaw-agent-id` HTTP header. Session persistence via the `user` field in request bodies.
 
 ### Core Data Flow
 
 ```
-cli.ts (REPL) → Orchestrator → OpenClawConnection (per agent)
-                     ↓
-              Renderer (terminal output)
-              SessionManager (disk persistence)
+cli.ts (entry) → GroupChat (async message bus) → OpenClawConnection (per agent)
+                       ↓
+                  ink TUI (React components)
+                  SessionManager (disk persistence)
 ```
 
 ### Key Source Files
 
-- **`src/cli.ts`** — Entry point. Handles subcommands (`init`), loads config, manages the readline REPL, and wires `Orchestrator` → `Renderer` → `SessionManager`. Uses single-readline + line-event promise queue pattern for MSYS/Git Bash compatibility.
-- **`src/orchestrator.ts`** — Core `@mention` engine. Sends user messages to the master agent, detects `@name` patterns in responses, routes them to target agents in parallel (recursively), collects results, sends them back to master for synthesis. Prepends `[SWARM CONTEXT]` blocks to delegated messages. Enforces `maxMentionDepth` (default 3) and a global cap of 20 mentions per message.
-- **`src/connection.ts`** — `OpenClawConnection`: HTTP client for a single agent. Streams SSE responses, maintains per-agent conversation history for multi-turn context, tracks tool calls from streaming deltas. Injects system prompt into history for all agents.
-- **`src/config.ts`** — Loads and validates `swarm.config.json`. Auto-reads global token from `~/.openclaw/openclaw.json`. Builds rich swarm-identity system prompts for every agent with team roster, endpoints, and models.
-- **`src/discover.ts`** — Gateway discovery. Reads `~/.openclaw/openclaw.json` for primary port/token/model, parses today's OpenClaw log for additional gateways, health-checks each candidate port.
-- **`src/session.ts`** — `SessionManager`: Persists conversations to `~/.openswarm/sessions/{id}.json`. Atomic writes. Saves on milestone events only.
-- **`src/init.ts`** — Discovery wizard. Calls `discoverGateways()`, presents numbered selection menus for assigning agents to discovered gateways, writes `swarm.config.json`.
-- **`src/spawn.ts`** — **DEPRECATED.** Retained for reference but not imported by cli.ts.
-- **`src/types.ts`** — All shared TypeScript types. `OrchestratorEvent` is the union type used between `Orchestrator`, `Renderer`, and `SessionManager`.
+- **`src/cli.ts`** — Entry point. Handles subcommands (`init`), loads config, creates `GroupChat`, launches the ink TUI, wires session persistence.
+- **`src/groupchat.ts`** — `GroupChat`: async message bus. Routes user messages to agents, detects `@mentions` in responses, auto-routes to other agents, handles dynamic agent spawning. Emits `GroupChatEvent` for the TUI.
+- **`src/connection.ts`** — `OpenClawConnection`: HTTP client for a single agent via the shared gateway. Routes via `x-openclaw-agent-id` header. Streams SSE responses, maintains per-agent conversation history, tracks tool calls.
+- **`src/config.ts`** — Loads and validates `swarm.config.json`. New format with `gateway` section. Auto-reads token from `~/.openclaw/openclaw.json`. Builds swarm-identity system prompts.
+- **`src/discover.ts`** — Gateway + agent discovery. Reads `~/.openclaw/openclaw.json` for port, token, model, and `agents.list[]`. Also supports legacy log-based port discovery.
+- **`src/session.ts`** — `SessionManager`: Persists flat `ChatMessage[]` to `~/.openswarm/sessions/{id}.json`. Atomic writes.
+- **`src/init.ts`** — Discovery wizard. Reads OpenClaw config, lists discovered agents, lets user assign names/colors, writes `swarm.config.json`.
+- **`src/types.ts`** — All shared TypeScript types. `GroupChatEvent` is the event union for TUI rendering. `ChatMessage` is the core message type.
 
-### `@mention` Orchestration Details
+### TUI Components (`src/tui/`)
 
-The orchestrator uses a regex built from all agent names (`@(agent1|agent2|...)\b`). When master responds with `@researcher do X @coder do Y`, both are extracted and processed in parallel via `Promise.all`. Results come back as `[Thread] @researcher replied: ...` and are sent back to master for synthesis. This recurses up to `maxMentionDepth` levels, with a per-branch visited set to prevent cycles.
+- **`App.tsx`** — Root: manages state, wires GroupChat events to React state.
+- **`StatusBar.tsx`** — Top bar: gateway info, session ID, agent count.
+- **`MessageList.tsx`** — Main area: scrollable chat messages.
+- **`Message.tsx`** — Single message: colored agent name + content.
+- **`AgentSidebar.tsx`** — Right panel: agent list with live activity status.
+- **`InputBox.tsx`** — Bottom: text input with history, slash commands.
 
-### Graceful Shutdown (Windows-specific)
+### `@mention` Routing
 
-The shutdown path in `cli.ts` avoids calling `process.exit()` directly. Instead it closes readline, destroys stdin (removes the libuv handle), and sets `process.exitCode`. This prevents `UV_HANDLE_CLOSING` assertion failures on Windows.
+GroupChat uses a regex matching ANY `@word` pattern. When an agent responds with `@researcher do X`, the message is auto-routed to that agent. Unknown @mentions auto-spawn new agents on the gateway. Recursion limited by `maxMentionDepth` (default 3) and global cap of 20 mentions per user message.
 
-### REPL (MSYS/Git Bash)
+### Agent Self-Consciousness
 
-In MSYS/Git Bash, stdin is a pipe (`FILE_TYPE_PIPE`), not a TTY. Creating/closing readline per question corrupts stdin state (nodejs/node#21771, #5620). The fix: create ONE readline interface, use the `line` event + a promise queue, `terminal: false`, never close mid-session.
+Every agent gets a system prompt with its identity, agent ID, model, and full team roster. Inter-agent messages are prepended with `[SWARM CONTEXT]` blocks.
+
+### Deprecated Files (excluded from build)
+
+- `src/orchestrator.ts` — Replaced by `src/groupchat.ts`
+- `src/renderer.ts` — Replaced by ink TUI components
+- `src/spawn.ts` — Was already deprecated
 
 ### Config Schema (`swarm.config.json`)
 
 ```json
 {
+  "gateway": {
+    "port": 18789,
+    "token": "auto"
+  },
   "agents": {
     "<name>": {
-      "port": 18789,                   // OR "url": "https://..."
+      "agentId": "main",
       "label": "Display Name",
-      "color": "indigo",               // indigo|green|amber|cyan|purple|red|blue|pink
-      "model": "anthropic/claude-sonnet-4-5",
-      "token": "...",                   // Optional override (auto-read from ~/.openclaw)
-      "systemPrompt": "..."            // Optional override (auto-generated if omitted)
+      "color": "indigo",
+      "model": "anthropic/claude-sonnet-4-5"
     }
   },
   "master": "<name>",
@@ -92,3 +91,7 @@ In MSYS/Git Bash, stdin is a pipe (`FILE_TYPE_PIPE`), not a TTY. Creating/closin
   "sessionPrefix": "openswarm"
 }
 ```
+
+- `gateway.port` + `gateway.token`: single gateway connection (token `"auto"` reads from `~/.openclaw/openclaw.json`)
+- `agents[name].agentId`: the OpenClaw agent ID used in `x-openclaw-agent-id` header
+- All agents share the gateway — no per-agent port/url needed

@@ -12,6 +12,22 @@ export interface GatewayInfo {
   alive: boolean
 }
 
+/** Agent info discovered from openclaw.json */
+export interface DiscoveredAgent {
+  id: string
+  name: string
+  model?: string
+  subagents?: string[]
+}
+
+/** Full discovery result from openclaw.json */
+export interface OpenClawDiscovery {
+  port: number
+  token: string | undefined
+  model: string | undefined
+  agents: DiscoveredAgent[]
+}
+
 /** Read the gateway token from ~/.openclaw/openclaw.json */
 export async function getGlobalToken(): Promise<string | undefined> {
   try {
@@ -21,6 +37,53 @@ export async function getGlobalToken(): Promise<string | undefined> {
     return typeof token === 'string' ? token : undefined
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Read full OpenClaw configuration including agents list.
+ * Returns gateway info + discovered agents.
+ */
+export async function discoverOpenClaw(): Promise<OpenClawDiscovery | null> {
+  try {
+    const raw = await readFile(OPENCLAW_CONFIG, 'utf-8')
+    const json = JSON.parse(raw)
+
+    const port = json?.gateway?.port
+    if (typeof port !== 'number') return null
+
+    const token = json?.gateway?.auth?.token
+    const model = json?.model?.primary ?? json?.agents?.defaults?.model?.primary
+
+    // Discover agents from agents.list[]
+    const agents: DiscoveredAgent[] = []
+    const agentList = json?.agents?.list
+    if (Array.isArray(agentList)) {
+      for (const entry of agentList) {
+        if (entry && typeof entry === 'object' && typeof entry.id === 'string') {
+          agents.push({
+            id: entry.id,
+            name: entry.name ?? entry.id,
+            model: entry.model?.primary ?? model,
+            subagents: entry.subagents?.allowAgents,
+          })
+        }
+      }
+    }
+
+    // If no agents list, add a default "main" agent
+    if (agents.length === 0) {
+      agents.push({ id: 'main', name: 'Main', model: typeof model === 'string' ? model : undefined })
+    }
+
+    return {
+      port,
+      token: typeof token === 'string' ? token : undefined,
+      model: typeof model === 'string' ? model : undefined,
+      agents,
+    }
+  } catch {
+    return null
   }
 }
 
@@ -75,9 +138,7 @@ function parseLogPorts(content: string): number[] {
 }
 
 /**
- * Parse the model associated with a port from log lines like:
- *   [gateway] agent model: anthropic/claude-sonnet-4-5
- * (looks for the model line appearing after the matching port's listen line)
+ * Parse the model associated with a port from log lines.
  */
 function parseLogModelForPort(content: string, port: number): string | undefined {
   const lines = content.split('\n')
@@ -95,19 +156,12 @@ function parseLogModelForPort(content: string, port: number): string | undefined
 }
 
 /**
- * Discover running OpenClaw gateways.
- *
- * 1. Reads ~/.openclaw/openclaw.json for primary port + token
- * 2. Parses today's log file for additional gateway ports + models
- * 3. Health-checks each candidate port in parallel
- *
- * Returns all candidates (alive + dead) sorted by port.
+ * Discover running OpenClaw gateways (legacy multi-port discovery).
  */
 export async function discoverGateways(): Promise<GatewayInfo[]> {
   const token = await getGlobalToken()
   const candidatePorts = new Set<number>()
 
-  // 1. Primary config
   let primaryPort: number | undefined
   let primaryModel: string | undefined
   try {
@@ -123,10 +177,9 @@ export async function discoverGateways(): Promise<GatewayInfo[]> {
       json?.agents?.defaults?.model?.primary
     if (typeof model === 'string') primaryModel = model
   } catch {
-    // No global config — that's fine
+    // No global config
   }
 
-  // 2. Today's log file
   let logContent = ''
   try {
     logContent = await readFile(getTodayLogPath(), 'utf-8')
@@ -139,7 +192,6 @@ export async function discoverGateways(): Promise<GatewayInfo[]> {
 
   if (candidatePorts.size === 0) return []
 
-  // 3. Health-check all candidates in parallel
   const results: GatewayInfo[] = []
 
   await Promise.all(

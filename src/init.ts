@@ -1,10 +1,9 @@
 import { createInterface } from 'node:readline/promises'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { discoverGateways, type GatewayInfo } from './discover.js'
+import { discoverOpenClaw, probePort } from './discover.js'
 
 const COLORS = ['indigo', 'green', 'amber', 'cyan', 'purple', 'red', 'blue', 'pink']
-const DEFAULT_NAMES = ['master', 'researcher', 'coder', 'analyst', 'writer']
 
 async function ask(
   rl: ReturnType<typeof createInterface>,
@@ -26,7 +25,7 @@ async function select<T>(
 ): Promise<T> {
   console.log(`  ${prompt}`)
   for (let i = 0; i < items.length; i++) {
-    const marker = i === defaultIndex ? '❯' : ' '
+    const marker = i === defaultIndex ? '>' : ' '
     console.log(`  ${marker} [${i + 1}] ${renderItem(items[i], i)}`)
   }
   const answer = await ask(rl, 'Select', String(defaultIndex + 1))
@@ -37,9 +36,8 @@ async function select<T>(
 /**
  * Discovery-based init wizard.
  *
- * Finds running OpenClaw gateways, lets the user assign each a role,
- * and writes swarm.config.json. No scaffolding of workspaces or
- * openclaw.json files — users manage their own OpenClaw instances.
+ * Reads OpenClaw config, discovers agents, lets user assign names/colors,
+ * and writes swarm.config.json with single-gateway format.
  */
 export async function runInitWizard(): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -48,16 +46,28 @@ export async function runInitWizard(): Promise<void> {
   console.log('  OpenSwarm Init')
   console.log('  ──────────────')
   console.log()
-  console.log('  Discovering running OpenClaw gateways...')
+  console.log('  Reading OpenClaw configuration...')
   console.log()
 
-  const gateways = await discoverGateways()
-  const alive = gateways.filter((g) => g.alive)
+  const discovery = await discoverOpenClaw()
 
-  if (alive.length === 0) {
-    console.log('  No running OpenClaw gateways found.')
+  if (!discovery) {
+    console.log('  Could not read ~/.openclaw/openclaw.json')
     console.log()
-    console.log('  Start one with:')
+    console.log('  Make sure OpenClaw is installed and configured.')
+    console.log('  Then re-run: openswarm init')
+    console.log()
+    rl.close()
+    return
+  }
+
+  // Health check the gateway
+  const alive = await probePort(discovery.port, discovery.token)
+
+  if (!alive) {
+    console.log(`  Gateway on port ${discovery.port} is not responding.`)
+    console.log()
+    console.log('  Start it with:')
     console.log('    openclaw gateway run')
     console.log()
     console.log('  Then re-run: openswarm init')
@@ -66,58 +76,55 @@ export async function runInitWizard(): Promise<void> {
     return
   }
 
-  console.log(`  Found ${alive.length} running gateway${alive.length > 1 ? 's' : ''}:`)
-  for (const g of alive) {
-    const modelStr = g.model ? ` — ${g.model}` : ''
-    console.log(`    port ${g.port}${modelStr}`)
+  console.log(`  Gateway: port ${discovery.port} (alive)`)
+  if (discovery.model) {
+    console.log(`  Default model: ${discovery.model}`)
   }
   console.log()
 
-  // Ask how many agents to configure
-  const answer = await ask(rl, `How many agents to configure?`, String(alive.length))
-  const agentCount = Math.min(parseInt(answer, 10) || alive.length, alive.length)
-
-  if (agentCount < 1) {
-    console.log('  Need at least 1 agent.')
-    rl.close()
-    return
+  // Show discovered agents
+  if (discovery.agents.length > 0) {
+    console.log(`  Discovered ${discovery.agents.length} agent${discovery.agents.length > 1 ? 's' : ''}:`)
+    for (const agent of discovery.agents) {
+      const modelStr = agent.model ? ` — ${agent.model}` : ''
+      const subsStr = agent.subagents?.length ? ` (subagents: ${agent.subagents.join(', ')})` : ''
+      console.log(`    ${agent.id} (${agent.name})${modelStr}${subsStr}`)
+    }
+    console.log()
   }
 
-  // Collect agent configurations
-  const agentEntries: Array<{ name: string; label: string; color: string; gateway: GatewayInfo }> = []
-  const usedPorts = new Set<number>()
+  // Let user select which agents to include
+  const answer = await ask(rl, 'How many agents to configure?', String(discovery.agents.length))
+  const agentCount = Math.max(1, Math.min(parseInt(answer, 10) || discovery.agents.length, 20))
+
+  const agentEntries: Array<{ name: string; agentId: string; label: string; color: string; model?: string }> = []
 
   for (let i = 0; i < agentCount; i++) {
     console.log()
     console.log(`  --- Agent ${i + 1} of ${agentCount} ---`)
 
-    // Pick a gateway
-    const availableGateways = alive.filter((g) => !usedPorts.has(g.port))
-    if (availableGateways.length === 0) {
-      console.log('  No more gateways available.')
-      break
+    // If we have discovered agents, let them pick
+    let agentId: string
+    let defaultName: string
+    let defaultModel: string | undefined
+
+    if (i < discovery.agents.length) {
+      const disc = discovery.agents[i]
+      agentId = disc.id
+      defaultName = disc.id
+      defaultModel = disc.model
+      console.log(`  OpenClaw agent ID: ${disc.id}`)
+    } else {
+      agentId = await ask(rl, 'OpenClaw agent ID', `agent${i}`)
+      defaultName = agentId
+      defaultModel = discovery.model
     }
 
-    const renderGateway = (g: GatewayInfo) => {
-      const modelStr = g.model ? ` — ${g.model}` : ''
-      return `port ${g.port}${modelStr}`
-    }
-
-    const gateway = await select(
-      rl,
-      'Which gateway?',
-      availableGateways,
-      renderGateway,
-      0,
-    )
-    usedPorts.add(gateway.port)
-
-    const defaultName = i < DEFAULT_NAMES.length ? DEFAULT_NAMES[i] : `agent${i}`
-    const name = await ask(rl, 'Agent name (lowercase, no spaces)', defaultName)
+    const name = await ask(rl, 'Swarm name (lowercase, no spaces)', defaultName)
     const label = await ask(rl, 'Display label', name.charAt(0).toUpperCase() + name.slice(1))
     const color = await ask(rl, `Color (${COLORS.join('/')})`, COLORS[i % COLORS.length])
 
-    agentEntries.push({ name, label, color, gateway })
+    agentEntries.push({ name, agentId, label, color, model: defaultModel })
   }
 
   if (agentEntries.length === 0) {
@@ -140,7 +147,7 @@ export async function runInitWizard(): Promise<void> {
       rl,
       'Which agent is the coordinator (master)?',
       agentEntries,
-      (a) => `${a.name} (${a.label}) — port ${a.gateway.port}`,
+      (a) => `${a.name} (${a.label}) — agentId: ${a.agentId}`,
       0,
     ).then((a) => a.name)
   }
@@ -149,7 +156,7 @@ export async function runInitWizard(): Promise<void> {
 
   // Build swarm.config.json
   const swarmAgents: Record<string, {
-    port: number
+    agentId: string
     label: string
     color: string
     model?: string
@@ -157,14 +164,21 @@ export async function runInitWizard(): Promise<void> {
 
   for (const entry of agentEntries) {
     swarmAgents[entry.name] = {
-      port: entry.gateway.port,
+      agentId: entry.agentId,
       label: entry.label,
       color: entry.color,
-      ...(entry.gateway.model ? { model: entry.gateway.model } : {}),
+      ...(entry.model ? { model: entry.model } : {}),
     }
   }
 
-  const swarmConfig = { agents: swarmAgents, master }
+  const swarmConfig = {
+    gateway: {
+      port: discovery.port,
+      token: 'auto',
+    },
+    agents: swarmAgents,
+    master,
+  }
 
   const configPath = join(process.cwd(), 'swarm.config.json')
   writeFileSync(configPath, JSON.stringify(swarmConfig, null, 2) + '\n')
@@ -172,11 +186,14 @@ export async function runInitWizard(): Promise<void> {
   console.log()
   console.log('  Created: swarm.config.json')
   console.log()
+  console.log('  Gateway:')
+  console.log(`    port ${discovery.port}`)
+  console.log()
   console.log('  Agents:')
   for (const entry of agentEntries) {
     const role = entry.name === master ? 'coordinator' : 'specialist'
-    const modelStr = entry.gateway.model ? ` · ${entry.gateway.model}` : ''
-    console.log(`    ${entry.name} (${entry.label}) — port ${entry.gateway.port}${modelStr} — ${role}`)
+    const modelStr = entry.model ? ` · ${entry.model}` : ''
+    console.log(`    ${entry.name} (${entry.label}) — agentId: ${entry.agentId}${modelStr} — ${role}`)
   }
   console.log()
   console.log('  Run your swarm:')

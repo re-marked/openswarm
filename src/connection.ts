@@ -1,14 +1,11 @@
 import { EventEmitter } from 'node:events'
-import type { AgentConfig } from './types.js'
+import type { AgentConfig, GatewayConfig } from './types.js'
 
 /**
- * Connection to an LLM via OpenAI-compatible chat completions API.
+ * Connection to an LLM agent via a single OpenClaw gateway.
  *
- * Works with:
- * - Google Gemini (via OpenAI compatibility layer)
- * - OpenAI directly
- * - OpenClaw HTTP endpoints (when available)
- * - Any OpenAI-compatible API
+ * All agents share one gateway port. Routing is done via the
+ * `x-openclaw-agent-id` header. Session persistence via `user` field.
  *
  * Maintains conversation history client-side for multi-turn support.
  */
@@ -16,21 +13,24 @@ export class OpenClawConnection extends EventEmitter {
   private _connected = false
   readonly name: string
   readonly config: AgentConfig
+  readonly gateway: GatewayConfig
   private history: Array<{ role: string; content: string }> = []
   private baseUrl: string
+  private sessionKey: string
 
-  constructor(name: string, config: AgentConfig, _sessionKey: string) {
+  constructor(name: string, config: AgentConfig, gateway: GatewayConfig, sessionKey: string) {
     super()
     this.name = name
     this.config = config
+    this.gateway = gateway
+    this.sessionKey = sessionKey
 
-    // Derive base URL: explicit url > port-based > workspace port-based
+    // Single gateway URL for all agents
     if (config.url) {
+      // Legacy: direct URL override
       this.baseUrl = config.url
-    } else if (config.port) {
-      this.baseUrl = `http://localhost:${config.port}/v1`
     } else {
-      this.baseUrl = ''
+      this.baseUrl = `http://localhost:${gateway.port}/v1`
     }
 
     // Inject system prompt into history for all agents
@@ -57,11 +57,10 @@ export class OpenClawConnection extends EventEmitter {
           messages: [{ role: 'user', content: 'Reply with OK' }],
           stream: false,
           max_tokens: 3,
+          user: this.sessionKey,
         }),
         signal: AbortSignal.timeout(30_000),
       })
-      // Any sub-500 response means the server is reachable (e.g. 405 if
-      // the gateway only supports streaming requests — still "connected").
       if (res.status >= 500) {
         const text = await res.text().catch(() => '')
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
@@ -92,6 +91,7 @@ export class OpenClawConnection extends EventEmitter {
           model: this.config.model ?? 'default',
           messages: this.history,
           stream: true,
+          user: this.sessionKey,
         }),
         signal: AbortSignal.timeout(120_000),
       })
@@ -151,7 +151,6 @@ export class OpenClawConnection extends EventEmitter {
                     existing.args += tc.function.arguments
                   }
                 } else if (tc.index !== undefined && tc.function?.arguments) {
-                  // Some APIs use index-based tool call streaming
                   for (const [, entry] of activeToolCalls) {
                     entry.args += tc.function.arguments
                     break
@@ -220,8 +219,14 @@ export class OpenClawConnection extends EventEmitter {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     }
-    if (this.config.token) {
-      headers['Authorization'] = `Bearer ${this.config.token}`
+    // Route to specific agent via header (preferred OpenClaw routing)
+    if (this.config.agentId) {
+      headers['x-openclaw-agent-id'] = this.config.agentId
+    }
+    // Auth token: agent-specific override > gateway token
+    const token = this.config.token ?? this.gateway.token
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
     return headers
   }
