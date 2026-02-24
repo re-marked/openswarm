@@ -104,9 +104,13 @@ export class Orchestrator extends EventEmitter {
     const masterToolEndHandler = (info: { name: string; id: string }) => {
       this.fire({ type: 'tool_end', agent: this.config.master, toolName: info.name, toolCallId: info.id })
     }
+    const masterErrorHandler = (err: string) => {
+      this.fire({ type: 'error', agent: this.config.master, error: err })
+    }
     masterConn.on('delta', masterDeltaHandler)
     masterConn.on('tool_start', masterToolStartHandler)
     masterConn.on('tool_end', masterToolEndHandler)
+    masterConn.on('error', masterErrorHandler)
 
     this.fire({ type: 'thinking', agent: this.config.master })
 
@@ -114,6 +118,7 @@ export class Orchestrator extends EventEmitter {
     masterConn.removeListener('delta', masterDeltaHandler)
     masterConn.removeListener('tool_start', masterToolStartHandler)
     masterConn.removeListener('tool_end', masterToolEndHandler)
+    masterConn.removeListener('error', masterErrorHandler)
 
     if (lastText !== null) {
       this.fire({ type: 'done', agent: this.config.master, content: lastText, depth: 0 })
@@ -188,6 +193,7 @@ export class Orchestrator extends EventEmitter {
       masterConn.on('delta', masterDeltaHandler)
       masterConn.on('tool_start', masterToolStartHandler)
       masterConn.on('tool_end', masterToolEndHandler)
+      masterConn.on('error', masterErrorHandler)
       lastText = await masterConn.sendMessage(followUpMessage)
       masterConn.removeListener('delta', masterDeltaHandler)
       masterConn.removeListener('tool_start', masterToolStartHandler)
