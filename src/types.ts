@@ -1,20 +1,27 @@
+/** Gateway connection configuration. */
+export interface GatewayConfig {
+  port: number
+  token: string
+}
+
 /** Configuration for a single agent in the swarm. */
 export interface AgentConfig {
-  /** OpenAI-compatible endpoint (required for direct API mode). */
-  url?: string
-  /** Path to an OpenClaw workspace directory (alternative to url). */
-  workspace?: string
-  /** Auto-assigned port for spawned workspace agents. */
-  port?: number
-  token?: string
+  /** OpenClaw agent ID used in x-openclaw-agent-id header. */
+  agentId: string
   label: string
   color: string
   model?: string
   systemPrompt?: string
+  /** @deprecated — use gateway.port instead. Kept for backward compat. */
+  port?: number
+  /** @deprecated — use gateway config instead. */
+  url?: string
+  token?: string
 }
 
 /** Top-level swarm configuration (loaded from swarm.config.json). */
 export interface SwarmConfig {
+  gateway: GatewayConfig
   agents: Record<string, AgentConfig>
   master: string
   maxMentionDepth: number
@@ -24,22 +31,33 @@ export interface SwarmConfig {
   configPath?: string
 }
 
+/** A chat message in the group chat. */
+export interface ChatMessage {
+  id: string
+  timestamp: number
+  from: string          // 'user' | agent name
+  to?: string           // optional target (null = broadcast to chat)
+  content: string
+  status: 'sending' | 'streaming' | 'complete' | 'error'
+}
+
+/** Agent activity status for the sidebar. */
+export type AgentActivity = 'idle' | 'thinking' | 'writing' | 'tool_use' | 'error'
+
+/** Events emitted by GroupChat for the TUI. */
+export type GroupChatEvent =
+  | { type: 'message_start'; message: ChatMessage }
+  | { type: 'message_delta'; messageId: string; content: string }
+  | { type: 'message_done'; messageId: string; content: string }
+  | { type: 'message_error'; messageId: string; error: string }
+  | { type: 'agent_status'; agent: string; activity: AgentActivity; toolName?: string }
+  | { type: 'agent_spawned'; agent: string; label: string; color: string }
+  | { type: 'system'; text: string }
+
 /** A detected @mention in agent output. */
 export interface MentionMatch {
   agent: string
   message: string
-}
-
-/** User message event for session recording. */
-export interface UserMessageEvent {
-  type: 'user_message'
-  content: string
-}
-
-/** A timestamped session event. */
-export interface SessionEvent {
-  timestamp: number
-  event: OrchestratorEvent | UserMessageEvent
 }
 
 /** Session metadata for listing. */
@@ -54,11 +72,11 @@ export interface SessionMeta {
 export interface SessionData {
   meta: SessionMeta
   config: { master: string; agents: string[] }
-  events: SessionEvent[]
+  messages: ChatMessage[]
   histories: Record<string, Array<{ role: string; content: string }>>
 }
 
-/** Events emitted by the orchestrator for the renderer to handle. */
+/** Legacy orchestrator events — kept for reference only. */
 export type OrchestratorEvent =
   | { type: 'connecting'; agent: string }
   | { type: 'connected'; agent: string }
@@ -78,3 +96,15 @@ export type OrchestratorEvent =
   | { type: 'agent_spawned'; agent: string; label: string; color: string }
   | { type: 'error'; agent: string; error: string }
   | { type: 'end' }
+
+/** User message event — legacy. */
+export interface UserMessageEvent {
+  type: 'user_message'
+  content: string
+}
+
+/** A timestamped session event — legacy. */
+export interface SessionEvent {
+  timestamp: number
+  event: OrchestratorEvent | UserMessageEvent
+}

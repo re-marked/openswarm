@@ -1,19 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { getGlobalToken } from './discover.js'
-import type { AgentConfig, SwarmConfig } from './types.js'
+import { getGlobalToken, discoverOpenClaw } from './discover.js'
+import type { AgentConfig, GatewayConfig, SwarmConfig } from './types.js'
 
 const DEFAULTS: Pick<SwarmConfig, 'maxMentionDepth' | 'sessionPrefix' | 'timeout'> = {
   maxMentionDepth: 3,
   sessionPrefix: 'openswarm',
   timeout: 120_000,
-}
-
-/** Derive an agent's HTTP endpoint from its config. */
-function agentEndpoint(agent: AgentConfig): string {
-  if (agent.url) return agent.url
-  if (agent.port) return `http://localhost:${agent.port}/v1`
-  return 'unknown'
 }
 
 /** Load and validate a swarm config file. */
@@ -33,6 +26,29 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
     throw new Error(`Invalid JSON in config file: ${absPath}`)
   }
 
+  // --- Parse gateway config ---
+  let gateway: GatewayConfig
+  const gw = json.gateway as Record<string, unknown> | undefined
+  if (gw && typeof gw === 'object') {
+    const port = typeof gw.port === 'number' ? gw.port : 18789
+    let token = ''
+    if (gw.token === 'auto' || !gw.token) {
+      token = (await getGlobalToken()) ?? ''
+    } else if (typeof gw.token === 'string') {
+      token = gw.token
+    }
+    gateway = { port, token }
+  } else {
+    // Auto-discover gateway from openclaw.json
+    const discovery = await discoverOpenClaw()
+    if (discovery) {
+      gateway = { port: discovery.port, token: discovery.token ?? '' }
+    } else {
+      gateway = { port: 18789, token: (await getGlobalToken()) ?? '' }
+    }
+  }
+
+  // --- Parse agents ---
   const agents = json.agents
   if (!agents || typeof agents !== 'object' || Array.isArray(agents)) {
     throw new Error('Config must have an "agents" object')
@@ -51,13 +67,9 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
       throw new Error(`Agent "${name}" must have a "color" string`)
     }
 
-    // Agents must have at least one of: url, workspace, port
-    const hasUrl = typeof a.url === 'string' && a.url.length > 0
-    const hasWorkspace = typeof a.workspace === 'string' && a.workspace.length > 0
-    const hasPort = typeof a.port === 'number'
-
-    if (!hasUrl && !hasWorkspace && !hasPort) {
-      throw new Error(`Agent "${name}" must have a "url", "port", or "workspace" field`)
+    // New format: agentId is required (defaults to agent name)
+    if (!a.agentId) {
+      a.agentId = name
     }
   }
 
@@ -70,6 +82,7 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
   }
 
   const config: SwarmConfig = {
+    gateway,
     agents: agents as SwarmConfig['agents'],
     master,
     configPath: absPath,
@@ -78,16 +91,6 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
     sessionPrefix:
       typeof json.sessionPrefix === 'string' ? json.sessionPrefix : DEFAULTS.sessionPrefix,
     timeout: typeof json.timeout === 'number' ? json.timeout : DEFAULTS.timeout,
-  }
-
-  // Apply global OpenClaw token to agents that don't have their own
-  const globalToken = await getGlobalToken()
-  if (globalToken) {
-    for (const agent of Object.values(config.agents)) {
-      if (!agent.token) {
-        agent.token = globalToken
-      }
-    }
   }
 
   // Build rich self-consciousness system prompts for all agents
@@ -99,42 +102,45 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
 /** Save the swarm config back to disk (for persisting dynamically spawned agents). */
 export async function saveConfig(config: SwarmConfig): Promise<void> {
   if (!config.configPath) return
-  // Write only the user-facing fields (not systemPrompt or configPath)
+
   const out: Record<string, unknown> = {
+    gateway: {
+      port: config.gateway.port,
+      token: 'auto',
+    },
     agents: {} as Record<string, Record<string, unknown>>,
     master: config.master,
   }
-  if (config.maxMentionDepth !== 3) (out as any).maxMentionDepth = config.maxMentionDepth
-  if (config.timeout !== 120_000) (out as any).timeout = config.timeout
-  if (config.sessionPrefix !== 'openswarm') (out as any).sessionPrefix = config.sessionPrefix
+  if (config.maxMentionDepth !== 3) (out as Record<string, unknown>).maxMentionDepth = config.maxMentionDepth
+  if (config.timeout !== 120_000) (out as Record<string, unknown>).timeout = config.timeout
+  if (config.sessionPrefix !== 'openswarm') (out as Record<string, unknown>).sessionPrefix = config.sessionPrefix
 
   for (const [name, agent] of Object.entries(config.agents)) {
-    const entry: Record<string, unknown> = { label: agent.label, color: agent.color }
-    if (agent.port) entry.port = agent.port
-    if (agent.url) entry.url = agent.url
+    const entry: Record<string, unknown> = {
+      agentId: agent.agentId,
+      label: agent.label,
+      color: agent.color,
+    }
     if (agent.model) entry.model = agent.model
-    if (agent.workspace) entry.workspace = agent.workspace
     ;(out.agents as Record<string, unknown>)[name] = entry
   }
 
   await writeFile(config.configPath, JSON.stringify(out, null, 2) + '\n')
 }
 
-/** Build a swarm identity system prompt for a single agent. Exported for dynamic agent spawning. */
+/** Build a swarm identity system prompt for a single agent. */
 export function buildAgentSystemPrompt(name: string, config: SwarmConfig): string {
   const agent = config.agents[name]
   if (!agent) return ''
 
-  const endpoint = agentEndpoint(agent)
   const model = agent.model ?? 'unknown'
   const isMaster = name === config.master
   const allAgents = Object.entries(config.agents)
 
   const teamLines = allAgents.map(([n, a]) => {
-    const ep = agentEndpoint(a)
     const m = a.model ?? 'unknown'
     const role = n === config.master ? 'coordinator' : 'specialist'
-    const marker = n === name ? ' — YOU' : ` — ${role} — ${ep} — ${m}`
+    const marker = n === name ? ' — YOU' : ` — ${role} — ${m}`
     return `  @${n} (${a.label})${marker}`
   })
 
@@ -144,24 +150,24 @@ export function buildAgentSystemPrompt(name: string, config: SwarmConfig): strin
     .join(', ')
 
   const lines: string[] = [
-    `You are ${agent.label} (${name}), an AI agent in an OpenSwarm multi-agent network.`,
+    `You are ${agent.label} (${name}), an AI agent in an OpenSwarm group chat.`,
     ``,
-    `Your endpoint: ${endpoint}`,
+    `Gateway: localhost:${config.gateway.port}`,
+    `Your agent ID: ${agent.agentId}`,
     `Your model: ${model}`,
     ``,
     `Your swarm team:`,
     ...teamLines,
     ``,
-    `You receive messages from humans (relayed by @${config.master}) AND from AI teammates.`,
-    `Teammate messages are prefixed with [SWARM CONTEXT]. Treat them as peer collaboration.`,
-    `You can @mention teammates to delegate: ${mentionableTeammates}`,
+    `This is a group chat. You see all messages from the user and other agents.`,
+    `You can @mention teammates to involve them: ${mentionableTeammates}`,
   ]
 
   if (isMaster) {
     lines.push(
       ``,
       `As coordinator, your job is to understand the user's request and delegate tasks`,
-      `to your team using @mentions. After receiving their replies, synthesize the results.`,
+      `to your team using @mentions. You see all responses in the group chat.`,
       `You can @mention ANY name to create a new specialist agent on-the-fly.`,
       `For example, @philosopher will spawn a new "Philosopher" agent if one doesn't exist.`,
       `You can @mention multiple agents in one response for parallel tasks.`,
@@ -179,7 +185,6 @@ export function buildAgentSystemPrompt(name: string, config: SwarmConfig): strin
 
 /**
  * Build and inject swarm identity system prompts for all agents without one.
- * Delegates to buildAgentSystemPrompt for each agent.
  */
 function injectSwarmIdentityPrompts(config: SwarmConfig): void {
   for (const [name, agent] of Object.entries(config.agents)) {

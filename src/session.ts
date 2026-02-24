@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { OrchestratorEvent, SessionData, SessionEvent, SessionMeta, UserMessageEvent } from './types.js'
+import type { ChatMessage, SessionData, SessionMeta } from './types.js'
 import { generateId } from './utils.js'
 
 const SESSIONS_DIR = join(homedir(), '.openswarm', 'sessions')
@@ -9,7 +9,7 @@ const SESSIONS_DIR = join(homedir(), '.openswarm', 'sessions')
 /**
  * Manages session persistence — save, load, list conversations.
  *
- * Writes on milestone events (user_message, done, end), NOT on every delta.
+ * Stores a flat list of ChatMessage objects.
  */
 export class SessionManager {
   private data: SessionData
@@ -24,7 +24,7 @@ export class SessionManager {
     this.data = {
       meta: { id, createdAt: now, updatedAt: now, preview: '' },
       config: { master, agents },
-      events: [],
+      messages: [],
       histories: {},
     }
 
@@ -36,22 +36,33 @@ export class SessionManager {
     return this.data.meta.id
   }
 
-  /** Append an event and auto-save on milestones. */
-  append(event: OrchestratorEvent | UserMessageEvent): void {
-    const sessionEvent: SessionEvent = { timestamp: Date.now(), event }
-    this.data.events.push(sessionEvent)
+  /** Append a chat message and auto-save. */
+  appendMessage(message: ChatMessage): void {
+    this.data.messages.push(message)
     this.data.meta.updatedAt = Date.now()
 
     // Update preview from first user message
-    if (event.type === 'user_message' && !this.data.meta.preview) {
-      this.data.meta.preview = event.content.slice(0, 120)
+    if (message.from === 'user' && !this.data.meta.preview) {
+      this.data.meta.preview = message.content.slice(0, 120)
     }
 
-    // Write on milestone events only
-    const milestones = ['user_message', 'done', 'end']
-    if (milestones.includes(event.type)) {
-      this.dirty = true
+    this.dirty = true
+    // Save on complete messages (not every streaming delta)
+    if (message.status === 'complete' || message.status === 'error') {
       this.flush()
+    }
+  }
+
+  /** Update a message in the session (e.g. when streaming completes). */
+  updateMessage(messageId: string, updates: Partial<ChatMessage>): void {
+    const msg = this.data.messages.find((m) => m.id === messageId)
+    if (msg) {
+      Object.assign(msg, updates)
+      this.data.meta.updatedAt = Date.now()
+      this.dirty = true
+      if (updates.status === 'complete' || updates.status === 'error') {
+        this.flush()
+      }
     }
   }
 
