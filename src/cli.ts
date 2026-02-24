@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createInterface, type Interface as ReadlineInterface } from 'node:readline'
+import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 import chalk from 'chalk'
 import { loadEnvFile } from './env.js'
@@ -32,12 +32,11 @@ function relativeTime(ts: number): string {
  * the assertion. Instead: close readline, destroy stdin (removes the handle
  * keeping the event loop alive), set exitCode, and let Node exit naturally.
  */
-async function shutdown(
+function flushAndClose(
   code: number,
   orchestrator?: Orchestrator,
-  rl?: ReadlineInterface,
   session?: SessionManager,
-): Promise<void> {
+): void {
   if (session && orchestrator) {
     try {
       session.setHistories(orchestrator.getHistories())
@@ -45,9 +44,7 @@ async function shutdown(
     } catch { /* best-effort */ }
   }
   orchestrator?.close()
-  rl?.close()
-  process.stdin.destroy() // removes the stdin handle so the event loop can drain
-  process.exitCode = code // set exit code without calling process.exit()
+  process.exitCode = code
 }
 
 async function main() {
@@ -127,7 +124,7 @@ async function main() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       console.error(chalk.red(`Failed to restore session: ${msg}`))
-      await shutdown(1, orchestrator)
+      flushAndClose(1, orchestrator)
       return
     }
   } else {
@@ -161,7 +158,7 @@ async function main() {
       console.log(chalk.dim(`  Start it with: openclaw gateway run`))
     }
     console.log()
-    await shutdown(1, orchestrator)
+    flushAndClose(1, orchestrator, session)
     return
   }
 
@@ -175,41 +172,42 @@ async function main() {
     }
   }
 
-  // --- REPL ---
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: chalk.dim('you > '),
+  // --- REPL (explicit async loop — more reliable than event-emitter readline in MSYS) ---
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+
+  let exiting = false
+
+  process.on('SIGINT', () => {
+    console.log(chalk.dim('\n\n  Shutting down...'))
+    exiting = true
+    rl.close()
   })
 
-  let busy = false
-
-  rl.prompt()
-
-  rl.on('line', async (line) => {
-    const input = line.trim()
-    if (!input) {
-      rl.prompt()
-      return
+  while (!exiting) {
+    let input: string
+    try {
+      input = (await rl.question(chalk.dim('you > '))).trim()
+    } catch {
+      // readline closed (Ctrl+D / SIGINT)
+      break
     }
+
+    if (!input) continue
 
     // Slash commands
     if (input === '/quit' || input === '/exit') {
       console.log(chalk.dim('\n  Goodbye!'))
-      await shutdown(0, orchestrator, rl, session)
-      return
+      break
     }
 
     if (input === '/status') {
       renderer.printStatus(orchestrator.getConnectionStatus())
-      rl.prompt()
-      return
+      continue
     }
 
     if (input === '/clear') {
       console.clear()
-      rl.prompt()
-      return
+      continue
     }
 
     if (input === '/sessions') {
@@ -225,8 +223,7 @@ async function main() {
         }
         console.log()
       }
-      rl.prompt()
-      return
+      continue
     }
 
     if (input === '/export') {
@@ -242,26 +239,16 @@ async function main() {
         const msg = err instanceof Error ? err.message : 'Unknown error'
         console.log(chalk.red(`\n  Export failed: ${msg}\n`))
       }
-      rl.prompt()
-      return
+      continue
     }
 
     if (input.startsWith('/')) {
       console.log(chalk.dim('  Unknown command. Available: /quit  /status  /clear  /sessions  /export'))
-      rl.prompt()
-      return
-    }
-
-    if (busy) {
-      console.log(chalk.dim('  Still processing... please wait.'))
-      return
+      continue
     }
 
     // Record user message in session
     session.append({ type: 'user_message', content: input })
-
-    // Send to orchestrator
-    busy = true
 
     try {
       await orchestrator.chat(input)
@@ -270,23 +257,13 @@ async function main() {
       console.log(chalk.red(`\n  Error: ${msg}`))
     }
 
-    // Save histories after each exchange
     session.setHistories(orchestrator.getHistories())
-
-    busy = false
     console.log()
-    rl.prompt()
-  })
+  }
 
-  rl.on('close', () => {
-    shutdown(0, orchestrator, undefined, session)
-  })
-
-  // Graceful shutdown
-  process.on('SIGINT', () => {
-    console.log(chalk.dim('\n\n  Shutting down...'))
-    shutdown(0, orchestrator, rl, session)
-  })
+  rl.close()
+  flushAndClose(0, orchestrator, session)
+  process.stdin.destroy()
 }
 
 main().catch((err) => {
