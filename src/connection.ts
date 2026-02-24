@@ -24,16 +24,17 @@ export class OpenClawConnection extends EventEmitter {
     this.name = name
     this.config = config
 
-    // Workspace agents: derive URL from auto-assigned port
-    if (config.workspace && config.port) {
+    // Derive base URL: explicit url > port-based > workspace port-based
+    if (config.url) {
+      this.baseUrl = config.url
+    } else if (config.port) {
       this.baseUrl = `http://localhost:${config.port}/v1`
     } else {
-      this.baseUrl = config.url ?? ''
+      this.baseUrl = ''
     }
 
-    // Prepend system prompt to history if configured (url-mode only;
-    // workspace agents get their system prompt from SOUL.md via OpenClaw)
-    if (config.systemPrompt && !config.workspace) {
+    // Inject system prompt into history for all agents
+    if (config.systemPrompt) {
       this.history.push({ role: 'system', content: config.systemPrompt })
     }
   }
@@ -59,7 +60,9 @@ export class OpenClawConnection extends EventEmitter {
         }),
         signal: AbortSignal.timeout(30_000),
       })
-      if (!res.ok) {
+      // Any sub-500 response means the server is reachable (e.g. 405 if
+      // the gateway only supports streaming requests — still "connected").
+      if (res.status >= 500) {
         const text = await res.text().catch(() => '')
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
       }
