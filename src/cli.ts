@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createInterface } from 'node:readline/promises'
+import { createReadStream } from 'node:fs'
 import { parseArgs } from 'node:util'
 import chalk from 'chalk'
 import { loadEnvFile } from './env.js'
@@ -173,7 +174,21 @@ async function main() {
   }
 
   // --- REPL (explicit async loop — more reliable than event-emitter readline in MSYS) ---
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  //
+  // In MSYS/Git Bash, process.stdin.isTTY is false because Node.js sees a Windows
+  // pipe rather than a real TTY. Readline treats a non-TTY stream as finite and
+  // closes after one line. Opening /dev/tty directly bypasses this — MSYS maps
+  // /dev/tty to the actual console and it stays open for the lifetime of the session.
+  let inputStream: NodeJS.ReadableStream = process.stdin
+  if (!process.stdin.isTTY) {
+    try {
+      inputStream = createReadStream('/dev/tty')
+    } catch {
+      // /dev/tty unavailable — fall back to stdin (may exit after one line on MSYS)
+    }
+  }
+
+  const rl = createInterface({ input: inputStream, output: process.stdout })
 
   let exiting = false
 
