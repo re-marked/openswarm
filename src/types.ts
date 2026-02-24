@@ -20,6 +20,8 @@ export interface SwarmConfig {
   maxMentionDepth: number
   sessionPrefix: string
   timeout: number
+  /** Path to the config file on disk (for saving dynamic agents). */
+  configPath?: string
 }
 
 /** A detected @mention in agent output. */
@@ -73,5 +75,6 @@ export type OrchestratorEvent =
   | { type: 'parallel_start'; agents: string[] }
   | { type: 'parallel_progress'; agent: string; status: string; toolName?: string }
   | { type: 'parallel_end'; results: Array<{ agent: string; content: string | null; error?: string }> }
+  | { type: 'agent_spawned'; agent: string; label: string; color: string }
   | { type: 'error'; agent: string; error: string }
   | { type: 'end' }

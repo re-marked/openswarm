@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { ResponseBuffer } from './buffer.js'
+import { buildAgentSystemPrompt, saveConfig } from './config.js'
 import { OpenClawConnection } from './connection.js'
 import type { AgentConfig, MentionMatch, OrchestratorEvent, SwarmConfig } from './types.js'
 import { generateId } from './utils.js'
@@ -7,13 +8,20 @@ import { generateId } from './utils.js'
 /** Maximum total mentions processed per user message (safety valve). */
 const MAX_TOTAL_MENTIONS = 20
 
+/** Colors to cycle through when spawning dynamic agents. */
+const SPAWN_COLORS = ['green', 'amber', 'cyan', 'purple', 'red', 'blue', 'pink']
+
+/** Regex that matches ANY @word pattern (not just known agents). */
+const MENTION_REGEX = /@([a-z][a-z0-9_-]*)\b/gi
+
 /**
- * Orchestrates multi-agent @mention conversations with deep nesting.
+ * Orchestrates multi-agent @mention conversations with deep nesting
+ * and dynamic agent self-replication.
  *
  * - Sends user messages to the master agent
- * - Detects @mentions in any agent's response
- * - Routes mentions to other agents (in parallel, recursively)
- * - Agents can @mention each other at any depth
+ * - Detects @mentions in any agent's response (ANY @word, not just known agents)
+ * - Unknown @mentions auto-spawn new agents on the master's gateway
+ * - Routes mentions to agents (in parallel, recursively)
  * - Sends thread results back to the originating agent for synthesis
  * - Per-branch visited set prevents cycles; global counter prevents explosion
  */
@@ -21,15 +29,11 @@ export class Orchestrator extends EventEmitter {
   private config: SwarmConfig
   private connections: Map<string, OpenClawConnection> = new Map()
   private connectingPromises: Map<string, Promise<OpenClawConnection | null>> = new Map()
-  private allAgentNames: string[]
-  private mentionRegex: RegExp
+  private spawnColorIndex = 0
 
   constructor(config: SwarmConfig) {
     super()
     this.config = config
-    // ALL agents are mentionable (any agent can mention any other)
-    this.allAgentNames = Object.keys(config.agents)
-    this.mentionRegex = new RegExp(`@(${this.allAgentNames.join('|')})\\b`, 'g')
   }
 
   /**
@@ -130,7 +134,7 @@ export class Orchestrator extends EventEmitter {
 
     let mentionRound = 0
     while (lastText) {
-      // Extract mentions, excluding self-mentions
+      // Extract mentions (including unknown agents — they'll be auto-spawned)
       const mentions = this.extractMentions(lastText, this.config.master)
 
       if (mentions.length === 0 || mentionRound >= this.config.maxMentionDepth) {
@@ -144,6 +148,13 @@ export class Orchestrator extends EventEmitter {
         break
       }
       globalMentionCount.value += mentions.length
+
+      // Auto-spawn any unknown agents before processing
+      for (const m of mentions) {
+        if (!this.config.agents[m.agent]) {
+          await this.spawnDynamicAgent(m.agent)
+        }
+      }
 
       // Process mentions in parallel with recursive nesting
       const buffer = new ResponseBuffer()
@@ -206,6 +217,47 @@ export class Orchestrator extends EventEmitter {
     }
 
     this.fire({ type: 'end' })
+  }
+
+  /**
+   * Dynamically spawn a new agent that doesn't exist in the config yet.
+   *
+   * - Uses the master's gateway (same port/url)
+   * - Generates a label from the name (capitalize first letter)
+   * - Cycles through colors
+   * - Builds a swarm identity system prompt
+   * - Persists to swarm.config.json
+   */
+  private async spawnDynamicAgent(name: string): Promise<void> {
+    const masterAgent = this.config.agents[this.config.master]
+    if (!masterAgent) return
+
+    const label = name.charAt(0).toUpperCase() + name.slice(1)
+    const color = SPAWN_COLORS[this.spawnColorIndex % SPAWN_COLORS.length]
+    this.spawnColorIndex++
+
+    const newAgent: AgentConfig = {
+      port: masterAgent.port,
+      url: masterAgent.url,
+      token: masterAgent.token,
+      model: masterAgent.model,
+      label,
+      color,
+    }
+
+    // Add to config
+    this.config.agents[name] = newAgent
+
+    // Build system prompt with full team awareness
+    newAgent.systemPrompt = buildAgentSystemPrompt(name, this.config)
+
+    // Fire event so renderer can show it
+    this.fire({ type: 'agent_spawned', agent: name, label, color })
+
+    // Persist to disk (best-effort)
+    try {
+      await saveConfig(this.config)
+    } catch { /* non-fatal */ }
   }
 
   /**
@@ -287,6 +339,13 @@ export class Orchestrator extends EventEmitter {
       globalMentionCount.value + childMentions.length <= MAX_TOTAL_MENTIONS
     ) {
       globalMentionCount.value += childMentions.length
+
+      // Auto-spawn any unknown agents
+      for (const cm of childMentions) {
+        if (!this.config.agents[cm.agent]) {
+          await this.spawnDynamicAgent(cm.agent)
+        }
+      }
 
       // Process child mentions in parallel
       const childBuffer = new ResponseBuffer()
@@ -381,16 +440,17 @@ export class Orchestrator extends EventEmitter {
 
   /**
    * Extract @mentions from text, excluding self-mentions.
+   * Matches ANY @word pattern — unknown agents will be auto-spawned.
    * Each agent is only extracted once (first occurrence wins).
    */
   private extractMentions(text: string, excludeAgent: string): MentionMatch[] {
     const mentions: MentionMatch[] = []
-    const matches = [...text.matchAll(this.mentionRegex)]
+    const matches = [...text.matchAll(MENTION_REGEX)]
     const seen = new Set<string>()
 
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i]
-      const agent = match[1]
+      const agent = match[1].toLowerCase()
       if (agent === excludeAgent || seen.has(agent)) continue
       seen.add(agent)
 
