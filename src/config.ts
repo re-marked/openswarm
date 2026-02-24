@@ -1,6 +1,7 @@
-import { readFile, access, stat } from 'node:fs/promises'
-import { resolve, join } from 'node:path'
-import type { SwarmConfig } from './types.js'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { getGlobalToken } from './discover.js'
+import type { AgentConfig, SwarmConfig } from './types.js'
 
 const DEFAULTS: Pick<SwarmConfig, 'maxMentionDepth' | 'sessionPrefix' | 'timeout'> = {
   maxMentionDepth: 3,
@@ -8,8 +9,12 @@ const DEFAULTS: Pick<SwarmConfig, 'maxMentionDepth' | 'sessionPrefix' | 'timeout
   timeout: 120_000,
 }
 
-/** Starting port for auto-assigned workspace agents. */
-const BASE_PORT = 19001
+/** Derive an agent's HTTP endpoint from its config. */
+function agentEndpoint(agent: AgentConfig): string {
+  if (agent.url) return agent.url
+  if (agent.port) return `http://localhost:${agent.port}/v1`
+  return 'unknown'
+}
 
 /** Load and validate a swarm config file. */
 export async function loadConfig(path: string): Promise<SwarmConfig> {
@@ -33,21 +38,11 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
     throw new Error('Config must have an "agents" object')
   }
 
-  let nextPort = BASE_PORT
-
   for (const [name, agent] of Object.entries(agents as Record<string, unknown>)) {
     if (!agent || typeof agent !== 'object') {
       throw new Error(`Agent "${name}" must be an object`)
     }
     const a = agent as Record<string, unknown>
-
-    // Must have url OR workspace (not both, not neither)
-    const hasUrl = typeof a.url === 'string' && a.url.length > 0
-    const hasWorkspace = typeof a.workspace === 'string' && a.workspace.length > 0
-
-    if (!hasUrl && !hasWorkspace) {
-      throw new Error(`Agent "${name}" must have a "url" or "workspace" field`)
-    }
 
     if (!a.label || typeof a.label !== 'string') {
       throw new Error(`Agent "${name}" must have a "label" string`)
@@ -56,31 +51,13 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
       throw new Error(`Agent "${name}" must have a "color" string`)
     }
 
-    // Validate workspace if specified
-    if (hasWorkspace) {
-      const wsPath = resolve(a.workspace as string)
-      try {
-        const s = await stat(wsPath)
-        if (!s.isDirectory()) {
-          throw new Error(`Agent "${name}" workspace is not a directory: ${wsPath}`)
-        }
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          throw new Error(`Agent "${name}" workspace not found: ${wsPath}`)
-        }
-        throw err
-      }
+    // Agents must have at least one of: url, workspace, port
+    const hasUrl = typeof a.url === 'string' && a.url.length > 0
+    const hasWorkspace = typeof a.workspace === 'string' && a.workspace.length > 0
+    const hasPort = typeof a.port === 'number'
 
-      // Check for openclaw.json in the workspace
-      const clawConfig = join(wsPath, 'openclaw.json')
-      try {
-        await access(clawConfig)
-      } catch {
-        throw new Error(`Agent "${name}" workspace missing openclaw.json: ${clawConfig}`)
-      }
-
-      // Auto-assign port
-      a.port = nextPort++
+    if (!hasUrl && !hasWorkspace && !hasPort) {
+      throw new Error(`Agent "${name}" must have a "url", "port", or "workspace" field`)
     }
   }
 
@@ -102,109 +79,87 @@ export async function loadConfig(path: string): Promise<SwarmConfig> {
     timeout: typeof json.timeout === 'number' ? json.timeout : DEFAULTS.timeout,
   }
 
-  // Auto-inject system prompts only for url-mode agents
-  injectDefaultPrompts(config)
+  // Apply global OpenClaw token to agents that don't have their own
+  const globalToken = await getGlobalToken()
+  if (globalToken) {
+    for (const agent of Object.values(config.agents)) {
+      if (!agent.token) {
+        agent.token = globalToken
+      }
+    }
+  }
 
-  // For workspace agents, inject teamwork @mention instructions into SOUL.md context
-  await injectWorkspaceTeamwork(config)
+  // Build rich self-consciousness system prompts for all agents
+  injectSwarmIdentityPrompts(config)
 
   return config
 }
 
 /**
- * Auto-generate system prompts for url-mode agents that don't have one.
+ * Build and inject a rich "swarm identity" system prompt for every agent.
  *
- * The master gets instructions about delegating via @mentions.
- * Non-master agents get instructions about their role and how to
- * collaborate with other agents via @mentions.
+ * Each agent learns:
+ * - Who it is (name, label, endpoint, model)
+ * - Who its teammates are (name, label, endpoint, model)
+ * - That it receives peer messages prefixed with [SWARM CONTEXT]
+ * - How to @mention teammates
  *
- * Workspace agents are skipped — they use SOUL.md instead.
+ * Only injected if the agent doesn't already have a systemPrompt.
  */
-function injectDefaultPrompts(config: SwarmConfig): void {
-  const masterAgent = config.agents[config.master]
-  const otherAgents = Object.entries(config.agents).filter(([name]) => name !== config.master)
+function injectSwarmIdentityPrompts(config: SwarmConfig): void {
+  const allAgents = Object.entries(config.agents)
 
-  // Build team roster for prompts
-  const teamList = otherAgents
-    .map(([name, agent]) => `  - @${name} (${agent.label})`)
-    .join('\n')
+  for (const [name, agent] of allAgents) {
+    if (agent.systemPrompt) continue
 
-  // Master prompt: delegate via @mentions (only for url-mode agents)
-  if (!masterAgent.systemPrompt && !masterAgent.workspace && otherAgents.length > 0) {
-    masterAgent.systemPrompt = [
-      `You are ${masterAgent.label}, the coordinator of a team of AI agents.`,
-      `Your job is to understand the user's request and delegate tasks to your team members using @mentions.`,
-      ``,
-      `Your team:`,
-      teamList,
-      ``,
-      `How to delegate: Write @agent_name followed by the task description in your response.`,
-      `Example: "@researcher Find the latest information about X"`,
-      `Example: "@coder Write a Python script that does Y"`,
-      ``,
-      `Rules:`,
-      `- ALWAYS delegate to at least one team member when the user asks for help.`,
-      `- You can @mention multiple agents in one response for parallel tasks.`,
-      `- After receiving their replies, synthesize the results for the user.`,
-      `- Be concise in your delegation — state exactly what you need from each agent.`,
-      `- Never refuse to @mention an agent. The @mention syntax is how you communicate with your team.`,
-    ].join('\n')
-  }
+    const endpoint = agentEndpoint(agent)
+    const model = agent.model ?? 'unknown'
+    const isMaster = name === config.master
 
-  // Non-master prompts: know they're specialists, can @mention others (url-mode only)
-  for (const [name, agent] of otherAgents) {
-    if (agent.systemPrompt || agent.workspace) continue
+    // Build team roster lines
+    const teamLines = allAgents.map(([n, a]) => {
+      const ep = agentEndpoint(a)
+      const m = a.model ?? 'unknown'
+      const role = n === config.master ? 'coordinator' : 'specialist'
+      const marker = n === name ? ' — YOU' : ` — ${role} — ${ep} — ${m}`
+      return `  @${n} (${a.label})${marker}`
+    })
 
-    const peers = Object.entries(config.agents)
+    const mentionableTeammates = allAgents
       .filter(([n]) => n !== name)
-      .map(([n, a]) => `@${n} (${a.label})`)
+      .map(([n]) => `@${n}`)
       .join(', ')
 
-    agent.systemPrompt = [
-      `You are ${agent.label}, a specialist AI agent in a team.`,
-      `You receive tasks from the team coordinator and other agents.`,
-      `Answer thoroughly and directly. Focus on your area of expertise.`,
+    const lines: string[] = [
+      `You are ${agent.label} (${name}), an AI agent in an OpenSwarm multi-agent network.`,
       ``,
-      `If you need help from another team member, @mention them: ${peers}`,
-      `Only @mention others when you genuinely need their specific expertise.`,
-    ].join('\n')
-  }
-}
+      `Your endpoint: ${endpoint}`,
+      `Your model: ${model}`,
+      ``,
+      `Your swarm team:`,
+      ...teamLines,
+      ``,
+      `You receive messages from humans (relayed by @${config.master}) AND from AI teammates.`,
+      `Teammate messages are prefixed with [SWARM CONTEXT]. Treat them as peer collaboration.`,
+      `You can @mention teammates to delegate: ${mentionableTeammates}`,
+    ]
 
-/**
- * For workspace agents, read SOUL.md and store as systemPrompt for display context.
- * This doesn't modify SOUL.md on disk — the OpenClaw gateway reads it directly.
- */
-async function injectWorkspaceTeamwork(config: SwarmConfig): Promise<void> {
-  for (const [name, agent] of Object.entries(config.agents)) {
-    if (!agent.workspace) continue
-
-    // Read SOUL.md for display context
-    const soulPath = join(resolve(agent.workspace), 'workspace', 'SOUL.md')
-    try {
-      const soul = await readFile(soulPath, 'utf-8')
-      // Store first paragraph as display context (don't use as systemPrompt for API)
-      const firstPara = soul.split('\n\n')[0]?.trim()
-      if (firstPara && !agent.systemPrompt) {
-        agent.systemPrompt = firstPara
-      }
-    } catch {
-      // No SOUL.md — that's fine
+    if (isMaster) {
+      lines.push(
+        ``,
+        `As coordinator, your job is to understand the user's request and delegate tasks`,
+        `to your team using @mentions. After receiving their replies, synthesize the results.`,
+        `Always delegate to at least one teammate when the user asks for help.`,
+        `You can @mention multiple agents in one response for parallel tasks.`,
+      )
+    } else {
+      lines.push(
+        ``,
+        `Focus on your area of expertise. Answer thoroughly and directly.`,
+        `Only @mention others when you genuinely need their specific expertise.`,
+      )
     }
 
-    // Read gateway token from openclaw.json
-    if (!agent.token) {
-      try {
-        const clawConfigPath = join(resolve(agent.workspace), 'openclaw.json')
-        const clawRaw = await readFile(clawConfigPath, 'utf-8')
-        const clawJson = JSON.parse(clawRaw)
-        const token = clawJson?.gateway?.auth?.token
-        if (typeof token === 'string') {
-          agent.token = token
-        }
-      } catch {
-        // No token configured — gateway might not require auth
-      }
-    }
+    agent.systemPrompt = lines.join('\n')
   }
 }

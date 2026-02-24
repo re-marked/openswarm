@@ -1,11 +1,17 @@
+/**
+ * @deprecated OpenSwarm no longer manages OpenClaw processes.
+ * Users run their own OpenClaw gateways; OpenSwarm discovers and connects them.
+ * This file is retained for reference but is not used by cli.ts.
+ */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync, unlinkSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { AgentConfig } from './types.js'
 
 const PIDS_DIR = join(homedir(), '.openswarm')
 const PIDS_FILE = join(PIDS_DIR, 'pids.json')
+const OPENCLAW_HOME = join(homedir(), '.openclaw')
 const HEALTH_TIMEOUT = 120_000 // 2 minutes — OpenClaw gateway can take 50s+
 const HEALTH_INTERVAL = 2_000
 const KILL_GRACE = 5_000
@@ -17,10 +23,73 @@ interface PidEntry {
 }
 
 /**
+ * Find the user's global OpenClaw auth-profiles.json.
+ * OpenClaw stores auth per agent; we look in the "main" agent first,
+ * then fall back to any other agent that has credentials.
+ */
+function findGlobalAuthProfiles(): string | null {
+  // Primary: ~/.openclaw/agents/main/agent/auth-profiles.json
+  const mainAuth = join(OPENCLAW_HOME, 'agents', 'main', 'agent', 'auth-profiles.json')
+  if (existsSync(mainAuth)) return mainAuth
+
+  // Fallback: any agent dir
+  const agentsDir = join(OPENCLAW_HOME, 'agents')
+  if (!existsSync(agentsDir)) return null
+
+  try {
+    for (const entry of readdirSync(agentsDir)) {
+      const candidate = join(agentsDir, entry, 'agent', 'auth-profiles.json')
+      if (existsSync(candidate)) return candidate
+    }
+  } catch { /* ok */ }
+
+  return null
+}
+
+/**
+ * Copy the global OpenClaw auth-profiles.json into a workspace agent's
+ * expected location so the gateway can find provider credentials.
+ *
+ * OpenClaw looks for auth at: {stateDir}/agents/{agentId}/agent/auth-profiles.json
+ * The agent ID from our openclaw.json is "main" by default.
+ */
+function provisionAuth(workspacePath: string): void {
+  const globalAuth = findGlobalAuthProfiles()
+  if (!globalAuth) return
+
+  // Read the openclaw.json to find the agent ID(s)
+  const clawConfigPath = join(workspacePath, 'openclaw.json')
+  let agentIds = ['main']
+  try {
+    const raw = readFileSync(clawConfigPath, 'utf-8')
+    const config = JSON.parse(raw)
+    const list = config?.agents?.list
+    if (Array.isArray(list)) {
+      agentIds = list.map((a: { id?: string }) => a.id ?? 'main')
+    }
+  } catch { /* use default */ }
+
+  for (const agentId of agentIds) {
+    const targetDir = join(workspacePath, 'agents', agentId, 'agent')
+    const targetPath = join(targetDir, 'auth-profiles.json')
+
+    // Don't overwrite if the user has already set up auth for this agent
+    if (existsSync(targetPath)) continue
+
+    try {
+      mkdirSync(targetDir, { recursive: true })
+      copyFileSync(globalAuth, targetPath)
+    } catch { /* best effort */ }
+  }
+}
+
+/**
  * Manages OpenClaw gateway processes for workspace agents.
  *
- * Spawns `npx openclaw gateway` for each workspace agent,
- * waits for them to become healthy, and cleans up on exit.
+ * - Automatically provisions auth from the user's global OpenClaw install
+ * - Spawns `openclaw gateway run` per agent with isolated state dirs
+ * - Polls health endpoints until ready
+ * - Cleans up on exit
  */
 export class SpawnManager {
   private processes: Map<string, ChildProcess> = new Map()
@@ -34,15 +103,19 @@ export class SpawnManager {
   startAgent(name: string, workspacePath: string, port: number): ChildProcess {
     const absPath = resolve(workspacePath)
 
-    const child = spawn('npx', [
-      'openclaw', 'gateway',
-      '--bind', 'lan',
-      '--port', String(port),
-      '--allow-unconfigured',
-    ], {
+    // Auto-provision auth from global OpenClaw install
+    provisionAuth(absPath)
+
+    // Use `gateway run` (foreground) not `gateway` (service mode).
+    // --force bypasses stale port locks.
+    // Single command string avoids Node v24 DEP0190 warning.
+    const cmd = `npx openclaw gateway run --bind lan --port ${port} --allow-unconfigured --force`
+
+    const child = spawn(cmd, {
       cwd: absPath,
       env: {
         ...process.env,
+        // Isolate each agent's state dir so gateway locks don't conflict
         OPENCLAW_STATE_DIR: absPath,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -52,16 +125,23 @@ export class SpawnManager {
     this.processes.set(name, child)
     this.ports.set(name, port)
 
-    // Log stderr for debugging (but don't spam the terminal)
-    child.stderr?.on('data', () => {
-      // Silently consume — stderr includes startup noise
+    // Collect stderr for error reporting
+    let stderrBuf = ''
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuf += chunk.toString()
     })
 
     child.on('exit', (code) => {
       this.processes.delete(name)
       if (!this.cleanedUp) {
-        // Unexpected exit
+        // Unexpected exit — show last few lines of stderr
         process.stderr.write(`\n  [spawn] ${name} exited with code ${code}\n`)
+        if (stderrBuf.trim()) {
+          const lines = stderrBuf.trim().split('\n').slice(-5)
+          for (const line of lines) {
+            process.stderr.write(`  [spawn] ${name}: ${line}\n`)
+          }
+        }
       }
     })
 
@@ -71,15 +151,18 @@ export class SpawnManager {
   /**
    * Wait for a gateway to become ready by polling its health endpoint.
    */
-  async waitForReady(port: number, timeout = HEALTH_TIMEOUT): Promise<boolean> {
+  async waitForReady(port: number, token?: string, timeout = HEALTH_TIMEOUT): Promise<boolean> {
     const url = `http://localhost:${port}/v1/chat/completions`
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
     const start = Date.now()
 
     while (Date.now() - start < timeout) {
       try {
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             model: 'default',
             messages: [{ role: 'user', content: 'ping' }],
@@ -116,7 +199,7 @@ export class SpawnManager {
       this.startAgent(name, agent.workspace, agent.port)
 
       startPromises.push(
-        this.waitForReady(agent.port).then((ready) => {
+        this.waitForReady(agent.port, agent.token).then((ready) => {
           results.set(name, ready)
           onProgress?.(name, ready ? 'ready' : 'failed')
         })

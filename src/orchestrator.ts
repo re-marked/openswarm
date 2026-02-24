@@ -32,6 +32,36 @@ export class Orchestrator extends EventEmitter {
     this.mentionRegex = new RegExp(`@(${this.allAgentNames.join('|')})\\b`, 'g')
   }
 
+  /**
+   * Build a [SWARM CONTEXT] block to prepend to every delegated message.
+   * Gives each receiving agent full situational awareness.
+   */
+  private buildSwarmContext(fromName: string, toName: string, depth: number): string {
+    const from = this.config.agents[fromName]
+    const to = this.config.agents[toName]
+
+    const fromEndpoint = from?.url ?? (from?.port ? `http://localhost:${from.port}/v1` : 'unknown')
+    const toEndpoint = to?.url ?? (to?.port ? `http://localhost:${to.port}/v1` : 'unknown')
+
+    const teamRoster = Object.entries(this.config.agents)
+      .map(([n, a]) => {
+        const role = n === this.config.master ? 'coordinator' : 'specialist'
+        const marker = n === toName ? '(you)' : role
+        return `@${n} (${marker})`
+      })
+      .join(' | ')
+
+    return [
+      '[SWARM CONTEXT]',
+      `timestamp: ${new Date().toISOString()}`,
+      `from: ${fromName} (${from?.label ?? fromName}) · ${fromName === this.config.master ? 'AI coordinator' : 'AI specialist'} · model: ${from?.model ?? 'unknown'} · ${fromEndpoint}`,
+      `to: ${toName} (${to?.label ?? toName}) · YOU · model: ${to?.model ?? 'unknown'} · ${toEndpoint}`,
+      `team: ${teamRoster}`,
+      `depth: ${depth} / ${this.config.maxMentionDepth}`,
+      '---',
+    ].join('\n')
+  }
+
   /** Emit a typed event for the renderer. */
   private fire(event: OrchestratorEvent): void {
     this.emit('event', event)
@@ -222,7 +252,10 @@ export class Orchestrator extends EventEmitter {
 
     this.fire({ type: 'parallel_progress', agent: mention.agent, status: 'thinking' })
 
-    let result = await conn.sendMessage(mention.message)
+    const contextBlock = this.buildSwarmContext(parentAgent, mention.agent, depth)
+    const messageWithContext = `${contextBlock}\n${mention.message}`
+
+    let result = await conn.sendMessage(messageWithContext)
     conn.removeListener('delta', deltaHandler)
     conn.removeListener('tool_start', toolStartHandler)
     conn.removeListener('tool_end', toolEndHandler)
