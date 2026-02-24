@@ -96,8 +96,10 @@ async function main() {
     process.exit(1)
   }
 
-  // Clear terminal before launching TUI
+  // Clear terminal and push cursor to bottom (Claude Code style)
+  const rows = process.stdout.rows || 24
   process.stdout.write('\x1b[2J\x1b[H')
+  process.stdout.write('\n'.repeat(rows - 1))
 
   // --- Launch ink TUI ---
   const { render } = await import('ink')
