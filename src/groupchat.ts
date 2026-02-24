@@ -5,7 +5,7 @@ import type { AgentConfig, ChatMessage, GroupChatEvent, MentionMatch, SwarmConfi
 import { generateId } from './utils.js'
 
 /** Maximum total mentions processed per user message (safety valve). */
-const MAX_TOTAL_MENTIONS = 20
+const MAX_TOTAL_MENTIONS = 40
 
 /** Colors to cycle through when spawning dynamic agents. */
 const SPAWN_COLORS = ['green', 'amber', 'cyan', 'purple', 'red', 'blue', 'pink']
@@ -219,9 +219,11 @@ export class GroupChat extends EventEmitter {
         }
 
         // Route to mentioned agents in parallel
+        // Pass the agent's response as the message — the swarm context block
+        // (prepended by routeToAgent) already identifies who said what
         await Promise.all(
           mentions.map((m) =>
-            this.routeToAgent(m.agent, `${agentName} said: ${result}`, agentName, depth + 1)
+            this.routeToAgent(m.agent, result, agentName, depth + 1)
           )
         )
       }
@@ -241,13 +243,22 @@ export class GroupChat extends EventEmitter {
       })
       .join(' | ')
 
+    const turnsLeft = this.config.maxMentionDepth - depth
+
     return [
       '[SWARM CONTEXT]',
-      `timestamp: ${new Date().toISOString()}`,
       `from: ${fromName} (${from?.label ?? fromName})`,
       `to: ${toName} (${to?.label ?? toName}) — YOU`,
       `team: ${teamRoster}`,
-      `depth: ${depth} / ${this.config.maxMentionDepth}`,
+      `conversation depth: ${depth} (${turnsLeft} turns remaining)`,
+      ``,
+      `You are being addressed in a group chat. Respond to what ${fromName} said.`,
+      `If you want to continue the discussion, @mention the agent(s) you're replying to.`,
+      turnsLeft > 1
+        ? `There's room for more back-and-forth — engage deeply, push back, ask follow-ups.`
+        : turnsLeft === 1
+          ? `This is the last turn — make your final point count.`
+          : `No more turns available — wrap up your thought.`,
       '---',
     ].join('\n')
   }
@@ -313,24 +324,23 @@ export class GroupChat extends EventEmitter {
     } catch { /* non-fatal */ }
   }
 
-  /** Extract @mentions from text, excluding self-mentions. */
+  /**
+   * Extract @mentions from text, excluding self-mentions.
+   * All mentioned agents receive the FULL message text — not just the
+   * slice after their @mention. This ensures "@democrat @republican go"
+   * sends the full text to both agents.
+   */
   private extractMentions(text: string, excludeAgent: string): MentionMatch[] {
     const mentions: MentionMatch[] = []
     const matches = [...text.matchAll(MENTION_REGEX)]
     const seen = new Set<string>()
 
-    for (let i = 0; i < matches.length; i++) {
-      const match = matches[i]
+    // Collect unique mentioned agents
+    for (const match of matches) {
       const agent = match[1].toLowerCase()
       if (agent === excludeAgent || seen.has(agent)) continue
       seen.add(agent)
-
-      const start = match.index! + match[0].length
-      const end = i + 1 < matches.length ? matches[i + 1].index! : text.length
-      const message = text.slice(start, end).trim()
-      if (message) {
-        mentions.push({ agent, message })
-      }
+      mentions.push({ agent, message: text })
     }
 
     return mentions

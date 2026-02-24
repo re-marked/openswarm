@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Box, useApp } from 'ink'
 import { StatusBar } from './StatusBar.js'
 import { MessageList } from './MessageList.js'
@@ -6,6 +6,11 @@ import { AgentSidebar } from './AgentSidebar.js'
 import { InputBox } from './InputBox.js'
 import type { GroupChat } from '../groupchat.js'
 import type { ChatMessage, AgentActivity, AgentConfig, GroupChatEvent } from '../types.js'
+
+/** Strip [SWARM CONTEXT] blocks from displayed content. */
+function stripSwarmContext(text: string): string {
+  return text.replace(/\[SWARM CONTEXT\][\s\S]*?---\n?/g, '').trim()
+}
 
 interface AppProps {
   groupChat: GroupChat
@@ -20,34 +25,62 @@ export function App({ groupChat, sessionId }: AppProps) {
   const [agents, setAgents] = useState<Record<string, AgentConfig>>({ ...config.agents })
   const [activities, setActivities] = useState<Record<string, AgentActivity>>({})
 
+  // Accumulate deltas in a ref (no re-render per token), flush on a timer
+  const deltaBuffers = useRef<Map<string, string>>(new Map())
+  const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Flush buffered deltas into React state every 150ms
+  useEffect(() => {
+    flushTimerRef.current = setInterval(() => {
+      const buffers = deltaBuffers.current
+      if (buffers.size === 0) return
+
+      setMessages((prev) => {
+        let updated = prev
+        for (const [msgId, newContent] of buffers) {
+          updated = updated.map((m) =>
+            m.id === msgId ? { ...m, content: newContent } : m
+          )
+        }
+        return updated
+      })
+      buffers.clear()
+    }, 150)
+
+    return () => {
+      if (flushTimerRef.current) clearInterval(flushTimerRef.current)
+    }
+  }, [])
+
   useEffect(() => {
     const handler = (event: GroupChatEvent) => {
       switch (event.type) {
         case 'message_start':
-          setMessages((prev) => [...prev, event.message])
+          setMessages((prev) => [...prev, { ...event.message, content: '' }])
           break
 
-        case 'message_delta':
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === event.messageId
-                ? { ...m, content: m.content + event.content }
-                : m
-            )
-          )
+        case 'message_delta': {
+          // Buffer deltas — don't trigger a React render per token
+          const buf = deltaBuffers.current
+          const existing = buf.get(event.messageId) ?? ''
+          buf.set(event.messageId, existing + event.content)
           break
+        }
 
         case 'message_done':
+          // Clear any pending delta buffer for this message
+          deltaBuffers.current.delete(event.messageId)
           setMessages((prev) =>
             prev.map((m) =>
               m.id === event.messageId
-                ? { ...m, content: event.content, status: 'complete' as const }
+                ? { ...m, content: stripSwarmContext(event.content), status: 'complete' as const }
                 : m
             )
           )
           break
 
         case 'message_error':
+          deltaBuffers.current.delete(event.messageId)
           setMessages((prev) =>
             prev.map((m) =>
               m.id === event.messageId
@@ -68,7 +101,6 @@ export function App({ groupChat, sessionId }: AppProps) {
             color: event.color,
           }
           setAgents((prev) => ({ ...prev, [event.agent]: newAgent }))
-          // Add system message
           const sysMsg: ChatMessage = {
             id: `sys-${Date.now()}`,
             timestamp: Date.now(),
@@ -121,7 +153,6 @@ export function App({ groupChat, sessionId }: AppProps) {
       return
     }
 
-    // Send async — don't block the UI
     groupChat.sendUserMessage(text).catch((err) => {
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
