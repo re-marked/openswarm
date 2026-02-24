@@ -1,8 +1,8 @@
 import React from 'react'
 import { Box, Text } from 'ink'
+import { FormattedText } from './FormattedText.js'
 import type { ChatMessage, AgentConfig } from '../types.js'
 
-/** Map color names from config to ink color values. */
 const COLOR_MAP: Record<string, string> = {
   indigo: '#6366f1',
   green: '#22c55e',
@@ -21,24 +21,29 @@ function getHex(colorName: string): string {
 interface MessageProps {
   message: ChatMessage
   agents: Record<string, AgentConfig>
+  isFirst: boolean
 }
 
-export function Message({ message, agents }: MessageProps) {
+export function Message({ message, agents, isFirst }: MessageProps) {
   const isUser = message.from === 'user'
   const isSystem = message.from === 'system'
 
   if (isSystem) {
     return (
-      <Box paddingX={1} marginTop={0}>
+      <Box paddingX={1}>
         <Text color="gray" dimColor>  ◆ {message.content}</Text>
       </Box>
     )
   }
 
+  const isStreaming = message.status === 'streaming'
+  const isError = message.status === 'error'
+
   if (isUser) {
     return (
-      <Box flexDirection="column" paddingX={1} marginTop={1}>
-        <Text color="white" bold>● You</Text>
+      <Box flexDirection="column" paddingX={1}>
+        {!isFirst && <Text color="gray" dimColor>{'─'.repeat(70)}</Text>}
+        <Text color="white" bold>{'▶ '}You</Text>
         <Box paddingLeft={2}>
           <Text wrap="wrap">{message.content}</Text>
         </Box>
@@ -51,24 +56,25 @@ export function Message({ message, agents }: MessageProps) {
   const colorHex = agent ? getHex(agent.color) : '#ffffff'
   const label = agent?.label ?? message.from
 
-  const isStreaming = message.status === 'streaming'
-  const isError = message.status === 'error'
-
-  // Show content — for streaming, show what we have so far
   let displayContent = message.content
   if (isStreaming && !displayContent) {
-    displayContent = 'thinking...'
+    displayContent = '...'
   }
 
   return (
-    <Box flexDirection="column" paddingX={1} marginTop={1}>
+    <Box flexDirection="column" paddingX={1}>
+      {!isFirst && <Text color="gray" dimColor>{'─'.repeat(70)}</Text>}
       <Box>
-        <Text color={colorHex} bold>● {label}</Text>
-        {isStreaming && <Text color="gray"> ▍</Text>}
+        <Text color={colorHex} bold>{'● '}{label}</Text>
+        {isStreaming && <Text color="yellow"> ▍</Text>}
         {isError && <Text color="red"> ✗</Text>}
       </Box>
       <Box paddingLeft={2}>
-        <Text wrap="wrap">{displayContent}</Text>
+        {isStreaming ? (
+          <Text wrap="wrap">{displayContent}</Text>
+        ) : (
+          <FormattedText>{displayContent}</FormattedText>
+        )}
       </Box>
     </Box>
   )
