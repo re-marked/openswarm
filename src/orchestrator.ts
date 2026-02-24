@@ -198,6 +198,7 @@ export class Orchestrator extends EventEmitter {
       masterConn.removeListener('delta', masterDeltaHandler)
       masterConn.removeListener('tool_start', masterToolStartHandler)
       masterConn.removeListener('tool_end', masterToolEndHandler)
+      masterConn.removeListener('error', masterErrorHandler)
 
       if (lastText !== null) {
         this.fire({ type: 'done', agent: this.config.master, content: lastText, depth: 0 })

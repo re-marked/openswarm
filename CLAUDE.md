@@ -8,6 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Dev mode — run TypeScript directly (no build step needed)
 npx tsx src/cli.ts
 
+# Init wizard — discovers running OpenClaw gateways and writes swarm.config.json
+npx tsx src/cli.ts init
+
 # Build to dist/
 npm run build
 
@@ -21,13 +24,20 @@ No test framework is configured. There are no lint scripts.
 
 OpenSwarm is a CLI that connects multiple LLM agents into a group chat via `@mention` orchestration. It is a pure Node.js ESM project with only 2 runtime dependencies (`chalk`, `ora`).
 
+**OpenSwarm does NOT manage OpenClaw processes.** Users run their own OpenClaw gateways; OpenSwarm discovers them and connects them into a swarm. The `up`/`down` subcommands are deprecated.
+
 ### Agent Modes
 
-Agents can operate in two modes, configured per-agent in `swarm.config.json`:
+Agents in `swarm.config.json` can be configured via:
 
-1. **Workspace mode** (`workspace` field): Points to an OpenClaw workspace directory. OpenSwarm spawns an `openclaw gateway run` process for each such agent, waits for its HTTP health check, then connects to it at `http://localhost:{auto-assigned-port}/v1`. Auth and model come from the workspace's `openclaw.json`.
+1. **Port mode** (`port` field): Connects to `http://localhost:{port}/v1`. This is the primary mode — `openswarm init` discovers running OpenClaw gateways and auto-populates ports.
+2. **URL mode** (`url` field): Points to any OpenAI-compatible endpoint directly.
 
-2. **Direct API mode** (`url` field): Points to any OpenAI-compatible endpoint directly. System prompts are auto-generated if not specified. API keys come from environment variables.
+Token is auto-read from `~/.openclaw/openclaw.json` at startup; can be overridden per-agent.
+
+### Agent Self-Consciousness
+
+Every agent gets a rich system prompt at connection time with its identity, endpoint, model, and full team roster. Every delegated inter-agent message is prepended with a `[SWARM CONTEXT]` block containing sender/receiver info, models, endpoints, team roster, and depth.
 
 ### Core Data Flow
 
@@ -40,14 +50,15 @@ cli.ts (REPL) → Orchestrator → OpenClawConnection (per agent)
 
 ### Key Source Files
 
-- **`src/cli.ts`** — Entry point. Handles subcommands (`init`, `up`, `down`), loads config, manages the readline REPL, and wires `Orchestrator` → `Renderer` → `SessionManager`.
-- **`src/orchestrator.ts`** — Core `@mention` engine. Sends user messages to the master agent, detects `@name` patterns in responses, routes them to target agents in parallel (recursively), collects results, sends them back to master for synthesis. Enforces `maxMentionDepth` (default 3) and a global cap of 20 mentions per message.
-- **`src/connection.ts`** — `OpenClawConnection`: HTTP client for a single agent. Streams SSE responses, maintains per-agent conversation history for multi-turn context, tracks tool calls from streaming deltas.
-- **`src/config.ts`** — Loads and validates `swarm.config.json`. Auto-assigns ports to workspace agents (starting at `19001`). Auto-generates system prompts for url-mode agents without one. Reads `SOUL.md` from workspace agents for display context.
-- **`src/spawn.ts`** — `SpawnManager`: Spawns `openclaw gateway run` subprocesses for workspace agents. Provisions auth by copying `~/.openclaw/agents/main/agent/auth-profiles.json` into each workspace. Polls `/v1/chat/completions` to detect readiness. Saves PIDs to `~/.openswarm/pids.json` for `openswarm down`.
-- **`src/session.ts`** — `SessionManager`: Persists conversations to `~/.openswarm/sessions/{id}.json`. Atomic writes (temp file + rename). Saves on milestone events only (`user_message`, `done`, `end`).
-- **`src/init.ts`** — Interactive wizard. Scaffolds `agents/{name}/openclaw.json`, `agents/{name}/workspace/SOUL.md`, `agents/{name}/workspace/AGENTS.md`, and `swarm.config.json`.
-- **`src/types.ts`** — All shared TypeScript types. `OrchestratorEvent` is the union type used to communicate between `Orchestrator`, `Renderer`, and `SessionManager`.
+- **`src/cli.ts`** — Entry point. Handles subcommands (`init`), loads config, manages the readline REPL, and wires `Orchestrator` → `Renderer` → `SessionManager`. Uses single-readline + line-event promise queue pattern for MSYS/Git Bash compatibility.
+- **`src/orchestrator.ts`** — Core `@mention` engine. Sends user messages to the master agent, detects `@name` patterns in responses, routes them to target agents in parallel (recursively), collects results, sends them back to master for synthesis. Prepends `[SWARM CONTEXT]` blocks to delegated messages. Enforces `maxMentionDepth` (default 3) and a global cap of 20 mentions per message.
+- **`src/connection.ts`** — `OpenClawConnection`: HTTP client for a single agent. Streams SSE responses, maintains per-agent conversation history for multi-turn context, tracks tool calls from streaming deltas. Injects system prompt into history for all agents.
+- **`src/config.ts`** — Loads and validates `swarm.config.json`. Auto-reads global token from `~/.openclaw/openclaw.json`. Builds rich swarm-identity system prompts for every agent with team roster, endpoints, and models.
+- **`src/discover.ts`** — Gateway discovery. Reads `~/.openclaw/openclaw.json` for primary port/token/model, parses today's OpenClaw log for additional gateways, health-checks each candidate port.
+- **`src/session.ts`** — `SessionManager`: Persists conversations to `~/.openswarm/sessions/{id}.json`. Atomic writes. Saves on milestone events only.
+- **`src/init.ts`** — Discovery wizard. Calls `discoverGateways()`, presents numbered selection menus for assigning agents to discovered gateways, writes `swarm.config.json`.
+- **`src/spawn.ts`** — **DEPRECATED.** Retained for reference but not imported by cli.ts.
+- **`src/types.ts`** — All shared TypeScript types. `OrchestratorEvent` is the union type used between `Orchestrator`, `Renderer`, and `SessionManager`.
 
 ### `@mention` Orchestration Details
 
@@ -57,18 +68,22 @@ The orchestrator uses a regex built from all agent names (`@(agent1|agent2|...)\
 
 The shutdown path in `cli.ts` avoids calling `process.exit()` directly. Instead it closes readline, destroys stdin (removes the libuv handle), and sets `process.exitCode`. This prevents `UV_HANDLE_CLOSING` assertion failures on Windows.
 
+### REPL (MSYS/Git Bash)
+
+In MSYS/Git Bash, stdin is a pipe (`FILE_TYPE_PIPE`), not a TTY. Creating/closing readline per question corrupts stdin state (nodejs/node#21771, #5620). The fix: create ONE readline interface, use the `line` event + a promise queue, `terminal: false`, never close mid-session.
+
 ### Config Schema (`swarm.config.json`)
 
 ```json
 {
   "agents": {
     "<name>": {
-      "workspace": "./agents/<name>",   // OR "url": "https://..."
+      "port": 18789,                   // OR "url": "https://..."
       "label": "Display Name",
-      "color": "indigo",                // indigo|green|amber|cyan|purple|red|blue|pink
-      "model": "gemini-2.5-flash",      // Direct API only
-      "token": "...",                    // Direct API only (auto-filled from .env)
-      "systemPrompt": "..."             // Direct API only (auto-generated if omitted)
+      "color": "indigo",               // indigo|green|amber|cyan|purple|red|blue|pink
+      "model": "anthropic/claude-sonnet-4-5",
+      "token": "...",                   // Optional override (auto-read from ~/.openclaw)
+      "systemPrompt": "..."            // Optional override (auto-generated if omitted)
     }
   },
   "master": "<name>",
@@ -77,5 +92,3 @@ The shutdown path in `cli.ts` avoids calling `process.exit()` directly. Instead 
   "sessionPrefix": "openswarm"
 }
 ```
-
-Each workspace agent directory must contain `openclaw.json` with a `gateway` section. The `init` wizard creates this automatically.
