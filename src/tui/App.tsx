@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Box, Text, Static, useApp } from 'ink'
+import { Box, Static, useApp } from 'ink'
 import { StatusBar } from './StatusBar.js'
 import { Message } from './Message.js'
 import { AgentSidebar } from './AgentSidebar.js'
@@ -21,22 +21,17 @@ export function App({ groupChat, sessionId }: AppProps) {
   const { exit } = useApp()
   const config = groupChat.getConfig()
 
-  // Completed messages — rendered via <Static>, scroll up naturally
   const [completedMessages, setCompletedMessages] = useState<ChatMessage[]>([])
-  // Streaming messages — re-rendered in the dynamic area
   const [streamingMessages, setStreamingMessages] = useState<ChatMessage[]>([])
-
   const [agents, setAgents] = useState<Record<string, AgentConfig>>({ ...config.agents })
   const [activities, setActivities] = useState<Record<string, AgentActivity>>({})
 
-  // Accumulate deltas in a ref, flush on timer
   const deltaBuffers = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     const timer = setInterval(() => {
       const buffers = deltaBuffers.current
       if (buffers.size === 0) return
-
       setStreamingMessages((prev) => {
         let updated = prev
         for (const [msgId, newContent] of buffers) {
@@ -48,7 +43,6 @@ export function App({ groupChat, sessionId }: AppProps) {
       })
       buffers.clear()
     }, 200)
-
     return () => clearInterval(timer)
   }, [])
 
@@ -58,10 +52,8 @@ export function App({ groupChat, sessionId }: AppProps) {
         case 'message_start': {
           const msg = { ...event.message, content: '' }
           if (msg.from === 'user' || msg.from === 'system') {
-            // User and system messages go straight to completed
             setCompletedMessages((prev) => [...prev, { ...event.message }])
           } else {
-            // Agent messages start in streaming
             setStreamingMessages((prev) => [...prev, msg])
           }
           break
@@ -76,18 +68,14 @@ export function App({ groupChat, sessionId }: AppProps) {
 
         case 'message_done': {
           deltaBuffers.current.delete(event.messageId)
-          const doneMsg: ChatMessage = {
-            id: event.messageId,
-            timestamp: Date.now(),
-            from: '',
-            content: stripSwarmContext(event.content),
-            status: 'complete',
-          }
-          // Move from streaming → completed
           setStreamingMessages((prev) => {
             const msg = prev.find((m) => m.id === event.messageId)
             if (msg) {
-              setCompletedMessages((cp) => [...cp, { ...msg, content: stripSwarmContext(event.content), status: 'complete' }])
+              setCompletedMessages((cp) => [...cp, {
+                ...msg,
+                content: stripSwarmContext(event.content),
+                status: 'complete',
+              }])
             }
             return prev.filter((m) => m.id !== event.messageId)
           })
@@ -99,7 +87,11 @@ export function App({ groupChat, sessionId }: AppProps) {
           setStreamingMessages((prev) => {
             const msg = prev.find((m) => m.id === event.messageId)
             if (msg) {
-              setCompletedMessages((cp) => [...cp, { ...msg, status: 'error', content: msg.content || event.error }])
+              setCompletedMessages((cp) => [...cp, {
+                ...msg,
+                status: 'error',
+                content: msg.content || event.error,
+              }])
             }
             return prev.filter((m) => m.id !== event.messageId)
           })
@@ -117,19 +109,17 @@ export function App({ groupChat, sessionId }: AppProps) {
             color: event.color,
           }
           setAgents((prev) => ({ ...prev, [event.agent]: newAgent }))
-          const sysMsg: ChatMessage = {
+          setCompletedMessages((prev) => [...prev, {
             id: `sys-${Date.now()}`,
             timestamp: Date.now(),
             from: 'system',
             content: `Spawned ${event.label} (@${event.agent})`,
-            status: 'complete',
-          }
-          setCompletedMessages((prev) => [...prev, sysMsg])
+            status: 'complete' as const,
+          }])
           break
         }
 
         case 'system':
-          // Suppress connection noise
           break
       }
     }
@@ -151,26 +141,24 @@ export function App({ groupChat, sessionId }: AppProps) {
         const agent = agents[name]
         lines.push(`${agent?.label ?? name}: ${connected ? 'connected' : 'disconnected'}`)
       }
-      const sysMsg: ChatMessage = {
+      setCompletedMessages((prev) => [...prev, {
         id: `sys-${Date.now()}`,
         timestamp: Date.now(),
         from: 'system',
         content: lines.join('\n'),
-        status: 'complete',
-      }
-      setCompletedMessages((prev) => [...prev, sysMsg])
+        status: 'complete' as const,
+      }])
       return
     }
 
     groupChat.sendUserMessage(text).catch((err) => {
-      const errorMsg: ChatMessage = {
+      setCompletedMessages((prev) => [...prev, {
         id: `err-${Date.now()}`,
         timestamp: Date.now(),
         from: 'system',
         content: `Error: ${err instanceof Error ? err.message : String(err)}`,
-        status: 'error',
-      }
-      setCompletedMessages((prev) => [...prev, errorMsg])
+        status: 'error' as const,
+      }])
     })
   }, [groupChat, agents])
 
@@ -179,7 +167,6 @@ export function App({ groupChat, sessionId }: AppProps) {
     exit()
   }, [groupChat, exit])
 
-  // Filter system noise from completed messages
   const visibleCompleted = completedMessages.filter((m) => {
     if (m.from !== 'system') return true
     if (m.content.startsWith('Spawned ')) return true
@@ -189,21 +176,14 @@ export function App({ groupChat, sessionId }: AppProps) {
 
   return (
     <Box flexDirection="column">
-      {/* Status bar — always at top */}
-      <StatusBar
-        gatewayPort={config.gateway.port}
-        agentCount={Object.keys(agents).length}
-        sessionId={sessionId}
-      />
-
-      {/* Completed messages — rendered once, scroll up naturally */}
+      {/* Completed messages — scroll up naturally in terminal */}
       <Static items={visibleCompleted}>
         {(msg, index) => (
           <Message key={msg.id} message={msg} agents={agents} isFirst={index === 0} />
         )}
       </Static>
 
-      {/* Streaming messages — re-rendered as content arrives */}
+      {/* Dynamic area: streaming messages + input + sidebar */}
       {streamingMessages.map((msg, index) => (
         <Message
           key={msg.id}
@@ -213,9 +193,13 @@ export function App({ groupChat, sessionId }: AppProps) {
         />
       ))}
 
-      {/* Agent sidebar + input — stays at bottom */}
-      <Box marginTop={1}>
+      <Box>
         <Box flexGrow={1} flexDirection="column">
+          <StatusBar
+            gatewayPort={config.gateway.port}
+            agentCount={Object.keys(agents).length}
+            sessionId={sessionId}
+          />
           <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
         </Box>
         <AgentSidebar agents={agents} activities={activities} master={config.master} />
