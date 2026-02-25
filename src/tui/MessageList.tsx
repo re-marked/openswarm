@@ -18,16 +18,11 @@ export function MessageList({ messages, agents }: MessageListProps) {
     return false
   })
 
-  // Track which index is the first non-system message to skip divider
-  let firstNonSystem = true
-
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {visible.map((msg) => {
-        const isFirst = msg.from !== 'system' && firstNonSystem
-        if (msg.from !== 'system') firstNonSystem = false
-        return <Message key={msg.id} message={msg} agents={agents} isFirst={isFirst} />
-      })}
+      {visible.map((msg) => (
+        <Message key={msg.id} message={msg} agents={agents} />
+      ))}
     </Box>
   )
 }

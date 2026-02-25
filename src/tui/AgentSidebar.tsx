@@ -17,14 +17,6 @@ function getHex(colorName: string): string {
   return COLOR_MAP[colorName] ?? '#ffffff'
 }
 
-const ACTIVITY_LABELS: Record<AgentActivity, string> = {
-  idle: 'idle',
-  thinking: 'thinking...',
-  writing: 'writing...',
-  tool_use: 'using tool...',
-  error: 'error',
-}
-
 interface AgentSidebarProps {
   agents: Record<string, AgentConfig>
   activities: Record<string, AgentActivity>
@@ -32,25 +24,24 @@ interface AgentSidebarProps {
 }
 
 export function AgentSidebar({ agents, activities, master }: AgentSidebarProps) {
+  const count = Object.keys(agents).length
+
   return (
     <Box flexDirection="column" width={22} borderStyle="single" borderLeft={true} borderTop={false} borderBottom={false} borderRight={false} paddingX={1}>
-      <Text bold underline>Agents</Text>
+      <Text bold>{count} agents here ●</Text>
       {Object.entries(agents).map(([name, agent]) => {
         const activity = activities[name] ?? 'idle'
         const isActive = activity !== 'idle'
         const colorHex = getHex(agent.color)
         const dot = isActive ? '●' : '○'
-        const role = name === master ? ' ★' : ''
+        const badge = name === master ? ' ★ M' : ''
+        const typing = isActive ? '...typing' : ''
 
         return (
-          <Box key={name} flexDirection="column">
-            <Box>
-              <Text color={colorHex}>{dot} </Text>
-              <Text color={colorHex} bold>{agent.label}{role}</Text>
-            </Box>
-            {isActive && (
-              <Text color="gray" dimColor>{'  '}{ACTIVITY_LABELS[activity]}</Text>
-            )}
+          <Box key={name}>
+            <Text color={colorHex}>{dot} </Text>
+            <Text color={colorHex} bold>{agent.label}{badge}</Text>
+            {typing ? <Text color="gray" dimColor>{typing}</Text> : null}
           </Box>
         )
       })}

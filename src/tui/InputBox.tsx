@@ -77,9 +77,15 @@ export function InputBox({ onSubmit, onQuit }: InputBoxProps) {
 
   return (
     <Box borderStyle="single" borderTop={true} borderBottom={false} borderLeft={false} borderRight={false} paddingX={1}>
-      <Text color="gray">you {'>'} </Text>
-      <Text>{input}</Text>
-      <Text color="cyan">█</Text>
+      <Text color="gray">&gt; </Text>
+      {input ? (
+        <>
+          <Text>{input}</Text>
+          <Text color="cyan">█</Text>
+        </>
+      ) : (
+        <Text color="gray" dimColor>send a message. @mention to tag an agent. esc to stop debate.</Text>
+      )}
     </Box>
   )
 }

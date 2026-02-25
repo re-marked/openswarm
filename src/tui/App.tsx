@@ -4,6 +4,7 @@ import { StatusBar } from './StatusBar.js'
 import { Message } from './Message.js'
 import { AgentSidebar } from './AgentSidebar.js'
 import { InputBox } from './InputBox.js'
+import { TypingIndicator } from './TypingIndicator.js'
 import type { GroupChat } from '../groupchat.js'
 import type { ChatMessage, AgentActivity, AgentConfig, GroupChatEvent } from '../types.js'
 
@@ -22,79 +23,53 @@ export function App({ groupChat, sessionId }: AppProps) {
   const config = groupChat.getConfig()
 
   const [completedMessages, setCompletedMessages] = useState<ChatMessage[]>([])
-  const [streamingMessages, setStreamingMessages] = useState<ChatMessage[]>([])
   const [agents, setAgents] = useState<Record<string, AgentConfig>>({ ...config.agents })
   const [activities, setActivities] = useState<Record<string, AgentActivity>>({})
 
-  const deltaBuffers = useRef<Map<string, string>>(new Map())
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const buffers = deltaBuffers.current
-      if (buffers.size === 0) return
-      setStreamingMessages((prev) => {
-        let updated = prev
-        for (const [msgId, newContent] of buffers) {
-          updated = updated.map((m) =>
-            m.id === msgId ? { ...m, content: newContent } : m
-          )
-        }
-        return updated
-      })
-      buffers.clear()
-    }, 200)
-    return () => clearInterval(timer)
-  }, [])
+  // Track pending agent messages (not displayed) so we can recover metadata on done
+  const pendingMessages = useRef<Map<string, ChatMessage>>(new Map())
 
   useEffect(() => {
     const handler = (event: GroupChatEvent) => {
       switch (event.type) {
         case 'message_start': {
-          const msg = { ...event.message, content: '' }
-          if (msg.from === 'user' || msg.from === 'system') {
+          if (event.message.from === 'user' || event.message.from === 'system') {
+            // User and system messages appear immediately
             setCompletedMessages((prev) => [...prev, { ...event.message }])
           } else {
-            setStreamingMessages((prev) => [...prev, msg])
+            // Agent messages: buffer internally, not displayed yet
+            pendingMessages.current.set(event.message.id, { ...event.message, content: '' })
           }
           break
         }
 
-        case 'message_delta': {
-          const buf = deltaBuffers.current
-          const existing = buf.get(event.messageId) ?? ''
-          buf.set(event.messageId, existing + event.content)
+        case 'message_delta':
+          // Buffered — no display during streaming
           break
-        }
 
         case 'message_done': {
-          deltaBuffers.current.delete(event.messageId)
-          setStreamingMessages((prev) => {
-            const msg = prev.find((m) => m.id === event.messageId)
-            if (msg) {
-              setCompletedMessages((cp) => [...cp, {
-                ...msg,
-                content: stripSwarmContext(event.content),
-                status: 'complete',
-              }])
-            }
-            return prev.filter((m) => m.id !== event.messageId)
-          })
+          const pending = pendingMessages.current.get(event.messageId)
+          pendingMessages.current.delete(event.messageId)
+          if (pending) {
+            setCompletedMessages((prev) => [...prev, {
+              ...pending,
+              content: stripSwarmContext(event.content),
+              status: 'complete',
+            }])
+          }
           break
         }
 
         case 'message_error': {
-          deltaBuffers.current.delete(event.messageId)
-          setStreamingMessages((prev) => {
-            const msg = prev.find((m) => m.id === event.messageId)
-            if (msg) {
-              setCompletedMessages((cp) => [...cp, {
-                ...msg,
-                status: 'error',
-                content: msg.content || event.error,
-              }])
-            }
-            return prev.filter((m) => m.id !== event.messageId)
-          })
+          const pendingErr = pendingMessages.current.get(event.messageId)
+          pendingMessages.current.delete(event.messageId)
+          if (pendingErr) {
+            setCompletedMessages((prev) => [...prev, {
+              ...pendingErr,
+              content: pendingErr.content || event.error,
+              status: 'error',
+            }])
+          }
           break
         }
 
@@ -131,7 +106,6 @@ export function App({ groupChat, sessionId }: AppProps) {
   const handleSubmit = useCallback((text: string) => {
     if (text === '/clear') {
       setCompletedMessages([])
-      setStreamingMessages([])
       return
     }
     if (text === '/status') {
@@ -175,35 +149,21 @@ export function App({ groupChat, sessionId }: AppProps) {
   })
 
   return (
-    <Box flexDirection="column">
-      {/* Completed messages — scroll up naturally in terminal */}
-      <Static items={visibleCompleted}>
-        {(msg, index) => (
-          <Message key={msg.id} message={msg} agents={agents} isFirst={index === 0} />
-        )}
-      </Static>
+    <Box flexDirection="row">
+      <Box flexDirection="column" flexGrow={1}>
+        <StatusBar />
 
-      {/* Dynamic area: streaming messages + input + sidebar */}
-      {streamingMessages.map((msg, index) => (
-        <Message
-          key={msg.id}
-          message={msg}
-          agents={agents}
-          isFirst={visibleCompleted.length === 0 && index === 0}
-        />
-      ))}
+        {/* Completed messages — scroll up naturally in terminal */}
+        <Static items={visibleCompleted}>
+          {(msg) => (
+            <Message key={msg.id} message={msg} agents={agents} />
+          )}
+        </Static>
 
-      <Box>
-        <Box flexGrow={1} flexDirection="column">
-          <StatusBar
-            gatewayPort={config.gateway.port}
-            agentCount={Object.keys(agents).length}
-            sessionId={sessionId}
-          />
-          <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
-        </Box>
-        <AgentSidebar agents={agents} activities={activities} master={config.master} />
+        <TypingIndicator agents={agents} activities={activities} />
+        <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
       </Box>
+      <AgentSidebar agents={agents} activities={activities} master={config.master} />
     </Box>
   )
 }
