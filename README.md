@@ -1,6 +1,6 @@
 # OpenSwarm
 
-A group chat for your AI agents. Works with almost any API OpenClaw supports — Anhtropic, Gemini, OpenAI, DeepSeek, Ollama, Groq, or your own endpoint. Agents collaborate through @mentions with parallel execution, recursive nesting, and rich terminal output.
+A group chat for your AI agents. Works with almost any API OpenClaw supports — Anthropic, Gemini, OpenAI, DeepSeek, Ollama, Groq, or your own endpoint. Agents collaborate through @mentions with parallel execution, recursive nesting, and self-replication.
 
 ```bash
 npm install -g openswarm-cli
@@ -28,9 +28,29 @@ you > Research AI agent trends and build a demo
 ● Master: Based on the team's findings, here's the full picture...
 ```
 
-Each agent is a full OpenClaw instance with its own personality (SOUL.md), tools, and skills.
-Whatever model or provider you've configured in OpenClaw — Gemini, OpenAI, Anthropic, Ollama,
-or anything else — OpenSwarm uses it automatically.
+Each agent is a full OpenClaw instance with its own personality (SOUL.md), tools, and skills. Whatever model or provider you've configured in OpenClaw — Gemini, OpenAI, Anthropic, Ollama, or anything else — OpenSwarm uses it automatically.
+
+---
+
+## Features
+
+### 🔍 Zero-Config Discovery
+OpenSwarm automatically discovers running OpenClaw gateways on your machine. No manual port configuration needed.
+
+### 🧬 Self-Replicating Agents
+Agents can @mention ANY name to spawn a new specialist on-the-fly. If @philosopher doesn't exist yet, it gets created automatically with the master's model and gateway.
+
+### ⚡ Parallel Execution
+Multiple agents work simultaneously. When master @mentions three specialists, all three run at once.
+
+### 🔁 Recursive Nesting
+Agents can @mention other agents, who can @mention more agents (depth-limited to prevent loops).
+
+### 🎨 Rich Terminal UI
+- Live streaming from all agents
+- Status indicators (thinking/streaming/tool use)
+- Color-coded agents
+- Tool use visibility
 
 ---
 
@@ -44,70 +64,27 @@ npm install -g openswarm-cli
 
 Requires Node.js 20+ and [OpenClaw](https://github.com/nicepkg/openclaw) installed (`npm install -g openclaw`).
 
-### Step 2: Initialize
+### Step 2: Start OpenClaw
+
+OpenSwarm needs at least one OpenClaw gateway running:
+
+```bash
+openclaw gateway run
+```
+
+Or if you already have OpenClaw running with your normal workflow, you're good to go.
+
+### Step 3: Initialize your swarm
 
 ```bash
 mkdir my-swarm && cd my-swarm
 openswarm init
 ```
 
-The wizard asks how many agents, their names, colors, and one-sentence roles.
-No model or API key questions — that's OpenClaw's domain.
-
-<<<<<<< HEAD
-**Supported providers out of the box:**
-
-| # | Provider | Free? | What you need |
-|---|----------|-------|---------------|
-| 1 | **Gemini** | Yes | API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| 2 | **Anthropic** | No | API key from [platform.claude.com](https://platform.claude.com) |
-| 3 | **OpenAI** | No | API key from [platform.openai.com](https://platform.openai.com) |
-| 4 | **Ollama** | Yes | [Ollama](https://ollama.com) running locally |
-| 5 | **Groq** | Yes (rate limited) | API key from [console.groq.com](https://console.groq.com) |
-| 7 | **Custom** | — | Any compatible endpoint |
-
-### Step 3: Add your API key
-
-```bash
-echo YOUR_API_KEY_VAR=your-key-here > .env
-=======
-Creates:
-```
-agents/
-  master/
-    openclaw.json           # Gateway config
-    workspace/
-      SOUL.md               # Personality + @mention instructions
-      AGENTS.md             # Workspace rules
-  researcher/
-    openclaw.json
-    workspace/
-      SOUL.md
-      AGENTS.md
-  coder/
-    openclaw.json
-    workspace/
-      SOUL.md
-      AGENTS.md
-swarm.config.json           # Workspace paths + labels + colors
->>>>>>> 3931be1 (docs: rewrite README with OpenClaw-first narrative)
-```
-
-### Step 3: Configure your agents
-
-Each agent needs a model configured via OpenClaw:
-
-```bash
-# Option A: Log in with your OpenClaw account
-cd agents/master && openclaw login
-
-# Option B: Edit openclaw.json directly
-# Add to agents/master/openclaw.json:
-#   "agents": { "defaults": { "model": { "primary": "openai/gpt-4o" } } }
-
-# Option C: Use any provider — Gemini, Anthropic, Ollama, etc.
-# See OpenClaw docs for provider configuration
-```
+The init wizard will:
+1. Discover running OpenClaw gateways
+2. Ask which one to use as the master
+3. Create a `swarm.config.json` with your settings
 
 ### Step 4: Start chatting
 
@@ -115,16 +92,11 @@ cd agents/master && openclaw login
 openswarm
 ```
 
-OpenSwarm spawns an OpenClaw gateway for each agent, waits for them to start,
-then drops you into a group chat REPL.
-
 ---
 
 ## How It Works
 
-You type a message. The master agent reads it and decides which specialists to
-@mention. Mentioned agents run **in parallel**, respond, and the master
-synthesizes everything into a final answer.
+You type a message. The master agent reads it and decides which specialists to @mention. Mentioned agents run **in parallel**, respond, and the master synthesizes everything into a final answer.
 
 ```
 You
@@ -135,10 +107,12 @@ You
       Master receives all results → final answer
 ```
 
-### Key behaviors
+### Key Behaviors
 
+- **Zero-config discovery** — finds OpenClaw gateways automatically
 - **Master streams live** — you see tokens as they arrive
-- **Specialists run in parallel** — a status line shows who's thinking/streaming
+- **Specialists run in parallel** — status line shows who's thinking/streaming
+- **Self-replication** — @mention any name to spawn a new agent
 - **Agents can @mention each other** — researcher → coder, coder → analyst, etc.
 - **Depth limit** — prevents infinite @mention loops (default: 3 levels)
 - **Tool visibility** — when agents use tools (web search, exec, etc.), you see live spinners
@@ -149,20 +123,12 @@ You
 
 ## CLI Commands
 
-```
-openswarm              # Start group chat (spawns agents automatically)
+```bash
+openswarm              # Start group chat
 openswarm init         # Create a new swarm
-openswarm up           # Spawn agents in background
-openswarm down         # Stop background agents
+openswarm --config <path>  # Use custom config file
+openswarm --session <id>   # Resume a saved session
 ```
-
-### Flags
-
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--config <path>` | `-c` | `swarm.config.json` | Config file path |
-| `--session <id>` | `-s` | — | Resume a saved session |
-| `--verbose` | `-v` | `false` | Verbose output |
 
 ### Slash Commands (in chat)
 
@@ -184,7 +150,7 @@ Every conversation auto-saves to `~/.openswarm/sessions/`.
 # Inside the chat, list past sessions
 /sessions
 
-# Resume a session (agents remember the full conversation)
+# Resume a session
 openswarm --session 20260223-abc123
 
 # Export to Markdown
@@ -195,114 +161,62 @@ openswarm --session 20260223-abc123
 
 ## Configuration
 
-### OpenClaw mode (primary)
-
-Each agent points to an OpenClaw workspace directory:
+### Basic config
 
 ```json
 {
   "agents": {
     "master": {
-      "workspace": "./agents/master",
+      "url": "http://localhost:18789/v1",
+      "token": "your-gateway-token",
       "label": "Master",
       "color": "indigo"
-    },
-    "researcher": {
-      "workspace": "./agents/researcher",
-      "label": "Researcher",
-      "color": "green"
-    },
-    "coder": {
-      "workspace": "./agents/coder",
-      "label": "Coder",
-      "color": "amber"
     }
   },
-  "master": "master"
+  "master": "master",
+  "maxMentionDepth": 3,
+  "sessionPrefix": "openswarm",
+  "timeout": 120000
 }
 ```
-
-No URL, model, token, or systemPrompt needed — OpenClaw handles all of that
-inside the workspace via `openclaw.json` and `SOUL.md`.
-
-### Direct API mode (backwards compatible)
-
-If an agent has `url` instead of `workspace`, it works as a direct API connection
-without OpenClaw:
-
-```json
-{
-  "agents": {
-    "quick": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "model": "gemini-2.5-flash",
-      "label": "Quick",
-      "color": "cyan"
-    }
-  },
-  "master": "quick"
-}
-```
-
-You can mix modes — some agents as OpenClaw workspaces, others as direct API.
 
 ### Agent fields
 
-| Field | Mode | Description |
-|-------|------|-------------|
-| `workspace` | OpenClaw | Path to OpenClaw workspace dir |
-| `url` | Direct API | OpenAI-compatible endpoint |
-| `label` | Both | Display name in terminal |
-| `color` | Both | Terminal color (`indigo`, `green`, `amber`, `cyan`, `purple`, `red`, `blue`, `pink`) |
-| `model` | Direct API | Model name |
-| `token` | Direct API | Auth token (auto-filled from `.env`) |
-| `systemPrompt` | Direct API | Custom system prompt |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `url` | Yes* | OpenClaw gateway endpoint (e.g., `http://localhost:18789/v1`) |
+| `port` | Yes* | Port number (alternative to `url`) |
+| `token` | No | Gateway auth token (auto-filled from `~/.openclaw/openclaw.json`) |
+| `label` | Yes | Display name in terminal |
+| `color` | Yes | Terminal color (`indigo`, `green`, `amber`, `cyan`, `purple`, `red`, `blue`, `pink`) |
+
+*Either `url` or `port` is required.
 
 ### Top-level fields
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `master` | required | Which agent coordinates |
+| `master` | required | Which agent coordinates the swarm |
 | `maxMentionDepth` | `3` | Max depth of recursive @mention chains |
-| `timeout` | `120000` | Timeout per agent response in ms |
+| `timeout` | `120000` | Timeout per agent response (ms) |
 | `sessionPrefix` | `"openswarm"` | Prefix for session file names |
 
 ---
 
-## Advanced: Direct API Mode
+## Self-Replication
 
-For lightweight use without OpenClaw installed, you can point agents directly at
-any OpenAI-compatible API:
+The master agent's system prompt tells it that it can @mention ANY name to create a new specialist on-the-fly.
 
-```json
-{
-  "agents": {
-    "master": {
-      "url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "label": "Master",
-      "color": "indigo",
-      "model": "gemini-2.5-flash"
-    },
-    "researcher": {
-      "url": "http://localhost:11434/v1",
-      "label": "Researcher",
-      "color": "green",
-      "model": "llama3"
-    }
-  },
-  "master": "master"
-}
-```
+When master writes `@philosopher explain Plato's cave`, and "philosopher" doesn't exist yet:
 
-Add your API key to `.env`:
+1. Orchestrator auto-creates it using master's gateway (same port/token/model)
+2. Assigns a capitalized label ("Philosopher") and cycling color
+3. Builds a swarm-identity system prompt with team roster
+4. Fires `agent_spawned` event → renderer shows `◆ Spawned Philosopher (@philosopher)`
+5. Saves updated `swarm.config.json` to disk (persists across sessions)
+6. Connects and routes the message
 
-```bash
-echo GOOGLE_API_KEY=AIza... > .env
-```
-
-Supported env vars: `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`,
-`ANTHROPIC_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `DEEPSEEK_API_KEY`,
-`MISTRAL_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`.
+Spawned agents can themselves @mention new agents (recursive replication, capped by `maxMentionDepth` and the 20-mention safety valve).
 
 ---
 
@@ -314,6 +228,9 @@ cd openswarm
 npm install
 
 # Dev mode (TypeScript, no build step)
+npm run dev
+
+# Or with tsx directly
 npx tsx src/cli.ts
 
 # Build
@@ -322,8 +239,6 @@ npm run build
 # Type check
 npm run type-check
 ```
-
-2 runtime dependencies: `chalk` (colors) and `ora` (spinners). That's it.
 
 ---
 
