@@ -96,10 +96,8 @@ async function main() {
     process.exit(1)
   }
 
-  // Clear terminal and push cursor to bottom (Claude Code style)
-  const rows = process.stdout.rows || 24
-  process.stdout.write('\x1b[2J\x1b[H')
-  process.stdout.write('\n'.repeat(rows - 1))
+  // Enter alternate screen buffer for fullscreen TUI
+  process.stdout.write('\x1b[?1049h')
 
   // --- Launch ink TUI ---
   const { render } = await import('ink')
@@ -111,6 +109,9 @@ async function main() {
   )
 
   await waitUntilExit()
+
+  // Leave alternate screen buffer
+  process.stdout.write('\x1b[?1049l')
 
   // Save session on exit
   try {

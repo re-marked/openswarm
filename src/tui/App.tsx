@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Box, Static, useApp } from 'ink'
+import { Box, Static, useApp, useStdout } from 'ink'
 import { StatusBar } from './StatusBar.js'
 import { Message } from './Message.js'
 import { AgentSidebar } from './AgentSidebar.js'
@@ -20,6 +20,7 @@ interface AppProps {
 
 export function App({ groupChat, sessionId }: AppProps) {
   const { exit } = useApp()
+  const { stdout } = useStdout()
   const config = groupChat.getConfig()
 
   const [completedMessages, setCompletedMessages] = useState<ChatMessage[]>([])
@@ -149,16 +150,18 @@ export function App({ groupChat, sessionId }: AppProps) {
   })
 
   return (
-    <Box flexDirection="row">
+    <Box flexDirection="row" height={stdout.rows}>
       <Box flexDirection="column" flexGrow={1}>
         <StatusBar />
 
-        {/* Completed messages — scroll up naturally in terminal */}
-        <Static items={visibleCompleted}>
-          {(msg) => (
-            <Message key={msg.id} message={msg} agents={agents} />
-          )}
-        </Static>
+        {/* Completed messages — fill available space */}
+        <Box flexDirection="column" flexGrow={1}>
+          <Static items={visibleCompleted}>
+            {(msg) => (
+              <Message key={msg.id} message={msg} agents={agents} />
+            )}
+          </Static>
+        </Box>
 
         <TypingIndicator agents={agents} activities={activities} />
         <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
