@@ -48,9 +48,12 @@ export function App({ groupChat, sessionId }: AppProps) {
           const pending = pendingMessages.current.get(event.messageId)
           pendingMessages.current.delete(event.messageId)
           if (pending) {
+            const content = stripSwarmContext(event.content)
+            // Filter out gateway heartbeat responses
+            if (/^HEARTBEAT[_\s]?OK$/i.test(content.trim())) break
             setCompletedMessages((prev) => [...prev, {
               ...pending,
-              content: stripSwarmContext(event.content),
+              content,
               status: 'complete',
             }])
           }
