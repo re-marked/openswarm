@@ -27,7 +27,7 @@ export function AgentSidebar({ agents, activities, master }: AgentSidebarProps) 
   const count = Object.keys(agents).length
 
   return (
-    <Box flexDirection="column" width={22} borderStyle="single" borderLeft={true} borderTop={false} borderBottom={false} borderRight={false} paddingX={1}>
+    <Box flexDirection="column" width={30} borderStyle="single" borderLeft={true} borderTop={false} borderBottom={false} borderRight={false} paddingX={1}>
       <Text bold>{count} agents here ●</Text>
       {Object.entries(agents).map(([name, agent]) => {
         const activity = activities[name] ?? 'idle'
