@@ -4,8 +4,8 @@ import { OpenClawConnection } from './connection.js'
 import type { AgentConfig, ChatMessage, GroupChatEvent, MentionMatch, SwarmConfig } from './types.js'
 import { generateId } from './utils.js'
 
-/** Maximum total mentions processed per user message (safety valve). */
-const MAX_TOTAL_MENTIONS = 40
+/** Maximum total mentions processed per user message (no hard limit — agents end debates by not tagging). */
+const MAX_TOTAL_MENTIONS = Infinity
 
 /** Colors to cycle through when spawning dynamic agents. */
 const SPAWN_COLORS = ['green', 'amber', 'cyan', 'purple', 'red', 'blue', 'pink']
@@ -205,10 +205,10 @@ export class GroupChat extends EventEmitter {
     this.fire({ type: 'agent_status', agent: agentName, activity: 'idle' })
     this.activeTasks--
 
-    // Handle @mentions in the response (recursive)
-    if (result && depth < this.config.maxMentionDepth) {
+    // Handle @mentions in the response (recursive — no depth limit, debate ends when agents stop tagging)
+    if (result) {
       const mentions = this.extractMentions(result, agentName)
-      if (mentions.length > 0 && this.globalMentionCount + mentions.length <= MAX_TOTAL_MENTIONS) {
+      if (mentions.length > 0) {
         this.globalMentionCount += mentions.length
 
         // Auto-spawn unknown agents
@@ -243,22 +243,16 @@ export class GroupChat extends EventEmitter {
       })
       .join(' | ')
 
-    const turnsLeft = this.config.maxMentionDepth - depth
-
     return [
       '[SWARM CONTEXT]',
       `from: ${fromName} (${from?.label ?? fromName})`,
       `to: ${toName} (${to?.label ?? toName}) — YOU`,
       `team: ${teamRoster}`,
-      `conversation depth: ${depth} (${turnsLeft} turns remaining)`,
+      `round: ${depth}`,
       ``,
-      `You are being addressed in a group chat. Respond to what ${fromName} said.`,
-      `If you want to continue the discussion, @mention the agent(s) you're replying to.`,
-      turnsLeft > 1
-        ? `There's room for more back-and-forth — engage deeply, push back, ask follow-ups.`
-        : turnsLeft === 1
-          ? `This is the last turn — make your final point count.`
-          : `No more turns available — wrap up your thought.`,
+      `${fromName} just said something to you. Fire back.`,
+      `@tag your opponent to keep the debate going. No tag = you're done talking.`,
+      `DO NOT tag @${this.config.master} — the coordinator is watching, not debating.`,
       '---',
     ].join('\n')
   }
