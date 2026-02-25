@@ -207,7 +207,11 @@ export class GroupChat extends EventEmitter {
 
     // Handle @mentions in the response (recursive — no depth limit, debate ends when agents stop tagging)
     if (result) {
-      const mentions = this.extractMentions(result, agentName)
+      let mentions = this.extractMentions(result, agentName)
+      // Master only fires ONE agent — take the first mention to prevent parallel chaos
+      if (agentName === this.config.master && mentions.length > 1) {
+        mentions = [mentions[0]]
+      }
       if (mentions.length > 0) {
         this.globalMentionCount += mentions.length
 
