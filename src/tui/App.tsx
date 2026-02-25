@@ -149,16 +149,8 @@ export function App({ groupChat, sessionId }: AppProps) {
     <Box flexDirection="column">
       {/* Messages scroll up naturally in terminal via Static */}
       <Static items={visibleCompleted}>
-        {(msg, index) => (
-          <Box key={msg.id} flexDirection="row">
-            <Box flexGrow={1}>
-              <Message message={msg} agents={agents} />
-            </Box>
-            {/* Render sidebar alongside the first message */}
-            {index === 0 && (
-              <AgentSidebar agents={agents} activities={activities} master={config.master} />
-            )}
-          </Box>
+        {(msg) => (
+          <Message key={msg.id} message={msg} agents={agents} />
         )}
       </Static>
 
