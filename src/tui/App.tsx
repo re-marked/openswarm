@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Box, Static, useApp, useStdout } from 'ink'
+import { Box, Static, useApp } from 'ink'
 import { StatusBar } from './StatusBar.js'
 import { Message } from './Message.js'
 import { AgentSidebar } from './AgentSidebar.js'
@@ -20,7 +20,6 @@ interface AppProps {
 
 export function App({ groupChat, sessionId }: AppProps) {
   const { exit } = useApp()
-  const { stdout } = useStdout()
   const config = groupChat.getConfig()
 
   const [completedMessages, setCompletedMessages] = useState<ChatMessage[]>([])
@@ -35,17 +34,14 @@ export function App({ groupChat, sessionId }: AppProps) {
       switch (event.type) {
         case 'message_start': {
           if (event.message.from === 'user' || event.message.from === 'system') {
-            // User and system messages appear immediately
             setCompletedMessages((prev) => [...prev, { ...event.message }])
           } else {
-            // Agent messages: buffer internally, not displayed yet
             pendingMessages.current.set(event.message.id, { ...event.message, content: '' })
           }
           break
         }
 
         case 'message_delta':
-          // Buffered — no display during streaming
           break
 
         case 'message_done': {
@@ -150,23 +146,31 @@ export function App({ groupChat, sessionId }: AppProps) {
   })
 
   return (
-    <Box flexDirection="row" height={stdout.rows}>
-      <Box flexDirection="column" flexGrow={1}>
-        <StatusBar />
-
-        {/* Completed messages — fill available space */}
-        <Box flexDirection="column" flexGrow={1}>
-          <Static items={visibleCompleted}>
-            {(msg) => (
-              <Message key={msg.id} message={msg} agents={agents} />
+    <Box flexDirection="column">
+      {/* Messages scroll up naturally in terminal via Static */}
+      <Static items={visibleCompleted}>
+        {(msg, index) => (
+          <Box key={msg.id} flexDirection="row">
+            <Box flexGrow={1}>
+              <Message message={msg} agents={agents} />
+            </Box>
+            {/* Render sidebar alongside the first message */}
+            {index === 0 && (
+              <AgentSidebar agents={agents} activities={activities} master={config.master} />
             )}
-          </Static>
-        </Box>
+          </Box>
+        )}
+      </Static>
 
-        <TypingIndicator agents={agents} activities={activities} />
-        <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
+      {/* Pinned bottom bar — always visible */}
+      <Box flexDirection="row">
+        <Box flexDirection="column" flexGrow={1}>
+          <StatusBar />
+          <TypingIndicator agents={agents} activities={activities} />
+          <InputBox onSubmit={handleSubmit} onQuit={handleQuit} />
+        </Box>
+        <AgentSidebar agents={agents} activities={activities} master={config.master} />
       </Box>
-      <AgentSidebar agents={agents} activities={activities} master={config.master} />
     </Box>
   )
 }
