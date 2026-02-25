@@ -18,15 +18,22 @@ function getHex(colorName: string): string {
   return COLOR_MAP[colorName] ?? '#ffffff'
 }
 
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  const h = d.getHours().toString().padStart(2, '0')
+  const m = d.getMinutes().toString().padStart(2, '0')
+  return `${h}:${m}`
+}
+
 interface MessageProps {
   message: ChatMessage
   agents: Record<string, AgentConfig>
-  isFirst: boolean
 }
 
-export function Message({ message, agents, isFirst }: MessageProps) {
+export function Message({ message, agents }: MessageProps) {
   const isUser = message.from === 'user'
   const isSystem = message.from === 'system'
+  const time = formatTime(message.timestamp)
 
   if (isSystem) {
     return (
@@ -36,29 +43,17 @@ export function Message({ message, agents, isFirst }: MessageProps) {
     )
   }
 
-  const isStreaming = message.status === 'streaming'
-  const isError = message.status === 'error'
-
-  // Divider between messages
-  const divider = !isFirst ? (
-    <Box paddingX={1} marginTop={1}>
-      <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
-    </Box>
-  ) : null
-
   if (isUser) {
     return (
-      <>
-        {divider}
-        <Box flexDirection="column" paddingX={1} marginBottom={1}>
-          <Box>
-            <Text wrap="truncate-end" color="white" bold>▶ You</Text>
-          </Box>
-          <Box paddingLeft={2} marginTop={0}>
-            <Text wrap="wrap">{message.content}</Text>
-          </Box>
+      <Box flexDirection="column" paddingX={1} marginTop={1}>
+        <Box>
+          <Text color="white" bold>● User</Text>
+          <Text color="gray"> · {time}</Text>
         </Box>
-      </>
+        <Box paddingLeft={2}>
+          <Text wrap="wrap" backgroundColor="gray">{message.content}</Text>
+        </Box>
+      </Box>
     )
   }
 
@@ -66,29 +61,18 @@ export function Message({ message, agents, isFirst }: MessageProps) {
   const agent = agents[message.from]
   const colorHex = agent ? getHex(agent.color) : '#ffffff'
   const label = agent?.label ?? message.from
-
-  let displayContent = message.content
-  if (isStreaming && !displayContent) {
-    displayContent = '...'
-  }
+  const isError = message.status === 'error'
 
   return (
-    <>
-      {divider}
-      <Box flexDirection="column" paddingX={1} marginBottom={1}>
-        <Box>
-          <Text wrap="truncate-end" color={colorHex} bold>● {label}</Text>
-          {isStreaming && <Text color="yellow"> ▍</Text>}
-          {isError && <Text color="red"> ✗</Text>}
-        </Box>
-        <Box paddingLeft={2} marginTop={0}>
-          {isStreaming ? (
-            <Text wrap="wrap">{displayContent}</Text>
-          ) : (
-            <FormattedText>{displayContent}</FormattedText>
-          )}
-        </Box>
+    <Box flexDirection="column" paddingX={1} marginTop={1}>
+      <Box>
+        <Text color={colorHex} bold>● {label}</Text>
+        <Text color="gray"> · {time}</Text>
+        {isError && <Text color="red"> ✗</Text>}
       </Box>
-    </>
+      <Box paddingLeft={2}>
+        <FormattedText>{message.content}</FormattedText>
+      </Box>
+    </Box>
   )
 }
